@@ -51,11 +51,11 @@ To identify language-specific features in LLMs, follow these steps (an example f
 
 ```bash
 # Step 1: Compute latent representations of language features
-python latent_computation.py --model_name "gemma-2-2b" --model_path YOUR_MODEL_PATH 
+python latent_computation.py --model "gemma-2-2b" --model_path YOUR_MODEL_PATH 
 # For additional arguments, please refer to utils.py
 
 # Step 2: Analyze and extract language-specific features
-python latent_analysis.py --model_name "gemma-2-2b" --model_path YOUR_MODEL_PATH
+python latent_analysis.py --model "gemma-2-2b" --model_path YOUR_MODEL_PATH
 ```
 
 The results will be saved in the `sae_acts` directory with the following structure:
