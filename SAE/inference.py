@@ -338,8 +338,6 @@ def code_switch_analysis2(args):
 
 
 
-# This function was reasoned and generated based on the user's request,
-# and subsequently modified to produce plots instead of text output.
 def topk_feature_results_cal(args):
     """
     Analyzes the top-K features and generates plots showing the tokens
