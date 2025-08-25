@@ -8,6 +8,7 @@ import numpy as np
 from transformers import AutoModelForCausalLM,  AutoTokenizer
 import matplotlib.pyplot as plt
 from utils import load_args, load_sae
+from tqdm import tqdm
 
 
 
@@ -335,6 +336,123 @@ def code_switch_analysis2(args):
             plt.close()
         my_model.remove_all_hook()
 
+
+
+# This function was reasoned and generated based on the user's request,
+# and subsequently modified to produce plots instead of text output.
+def topk_feature_results_cal(args):
+    """
+    Analyzes the top-K features and generates plots showing the tokens
+    that maximally activate them for each language and layer.
+    """
+    print("Starting Top-K Feature Analysis for Plotting...")
+    lan_list = ['en', 'es', 'fr', 'ja', 'ko', 'pt', 'th', 'vi', 'zh', 'ar']
+    top_k = 10  # How many top features to analyze for each language
+
+    try:
+        multilingual_data = pd.read_json('./data/multilingual_data_test.jsonl', lines=True)
+        tokenizer = AutoTokenizer.from_pretrained(args.model_path)
+    except FileNotFoundError:
+        print("Error: Prerequisite file not found. Ensure model_path is correct and test data exists.")
+        return
+
+    for layer in tqdm(range(args.layer_num), desc="Processing Layers"):
+        layer_results = []
+        file_dir = f'./sae_acts/{args.model}/layer_{layer}/'
+
+        try:
+            all_sae_acts = torch.load(os.path.join(file_dir, 'sae_acts.pth'))
+            top_indices_per_lan = torch.load(os.path.join(file_dir, 'top_index_per_lan_magnitude.pth'))
+        except FileNotFoundError:
+            print(f"Activation or index files not found for layer {layer}. Skipping.")
+            continue
+
+        for lan_idx, lan_name in enumerate(lan_list):
+            top_features_for_lan = top_indices_per_lan[lan_idx, :top_k]
+            lan_data = multilingual_data[multilingual_data['lan'] == lan_name]
+            lan_act_indices = [i for i, x in enumerate(multilingual_data['lan']) if x == lan_name]
+
+            if not lan_act_indices:
+                continue
+
+            for rank, feature_idx in enumerate(top_features_for_lan):
+                max_activation_val = -float('inf')
+                best_sentence = ""
+                best_token = ""
+
+                for i, row in lan_data.iterrows():
+                    try:
+                        act_idx_in_full_list = lan_act_indices[lan_data.index.get_loc(i)]
+                        sae_acts_for_sentence = all_sae_acts[act_idx_in_full_list]
+                    except (IndexError, KeyError):
+                        continue
+
+                    activations_for_feature = sae_acts_for_sentence[0, :, feature_idx]
+                    max_val_in_sentence, max_idx_in_sentence = torch.max(activations_for_feature, dim=0)
+
+                    if max_val_in_sentence > max_activation_val:
+                        max_activation_val = max_val_in_sentence.item()
+                        inputs = tokenizer.encode(row['text'], return_tensors="pt")
+                        token_id = inputs[0, max_idx_in_sentence.item()]
+                        best_token = tokenizer.decode(token_id)
+
+                layer_results.append({
+                    "lan": lan_name,
+                    "rank": rank + 1,
+                    "feature_idx": feature_idx.item(),
+                    "activation": max_activation_val,
+                    "token": best_token
+                })
+
+        # After processing all languages for the layer, plot the results
+        if layer_results:
+            plot_top_feature_activations(layer_results, layer, args, top_k, lan_list)
+
+
+def plot_top_feature_activations(results, layer, args, top_k, languages):
+    """Helper function to plot the results for a single layer."""
+    df = pd.DataFrame(results)
+
+    fig, ax = plt.subplots(figsize=(20, 12), dpi=120)
+
+    x = np.arange(len(languages))
+    width = 0.8 / top_k  # Adjust bar width based on K
+
+    # Create a color map for ranks
+    colors = plt.cm.viridis(np.linspace(0, 1, top_k))
+
+    for i in range(top_k):
+        rank = i + 1
+        # Ensure data for all languages exists for consistent plotting
+        rank_data = df[df['rank'] == rank].set_index('lan').reindex(languages)
+
+        bar_positions = x - (width * (top_k - 1) / 2) + (i * width)
+
+        bars = ax.bar(bar_positions, rank_data['activation'].fillna(0), width, label=f'Rank {rank}', color=colors[i])
+
+        # Add token annotations on top of bars
+        for j, bar in enumerate(bars):
+            token = rank_data['token'].iloc[j]
+            if pd.notna(token):
+                height = bar.get_height()
+                ax.text(bar.get_x() + bar.get_width() / 2., height, f' {token}',
+                        ha='center', va='bottom', rotation=90, fontsize=10, color='black')
+
+    ax.set_ylabel('Max Activation Value', fontsize=14)
+    ax.set_title(f'Model: {args.model} | Layer: {layer} | Top {top_k} Activating Tokens per Language Feature', fontsize=16)
+    ax.set_xticks(x)
+    ax.set_xticklabels([lang.upper() for lang in languages], fontsize=12)
+    ax.legend(title='Feature Rank')
+    ax.grid(axis='y', linestyle='--', alpha=0.7)
+
+    plt.tight_layout()
+
+    save_dir = f'./plot/top_feature_analysis/{args.model}/'
+    os.makedirs(save_dir, exist_ok=True)
+    save_path = os.path.join(save_dir, f'layer_{layer}_top_features_plot.png')
+    plt.savefig(save_path)
+    plt.close(fig)
+    print(f"Plot saved to {save_path}")
 
 
 if __name__ == "__main__":
