@@ -35,7 +35,7 @@ def generate_top_index_magnitude(args):
         num_lan = len(lan_list)
 
         avg_act_per_lan = []
-        # 하드코딩된 숫자 대신, 실제 언어 이름을 기준으로 반복
+        # 실제 언어 이름을 기준으로 반복
         for lan_name in lan_list:
             # 현재 언어(lan_name)에 해당하는 모든 문장의 인덱스를 찾음
             lan_indices = multilingual_data.index[multilingual_data['lan'] == lan_name].tolist()

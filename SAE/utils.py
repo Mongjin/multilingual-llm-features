@@ -1,6 +1,6 @@
 import argparse
 import os
-from lm_saes import SparseAutoEncoder
+# from lm_saes import SparseAutoEncoder
 from sae_lens import SAE
 
 
@@ -9,7 +9,8 @@ def load_args():
     parser.add_argument('--model', default='gemma-2-2b', type=str,  help='model')
     # parser.add_argument('--model', default='gemma-2-9b', type=str,  help='model')
     # parser.add_argument('--model', default='Meta-Llama-3.1-8B', type=str,  help='model')
-    parser.add_argument('--model_path', type=str,  help='model path')
+    parser.add_argument('--model_path', default='google/gemma-2-2b', type=str,  help='model path')
+    parser.add_argument('--mode', type=str, help='mode')
 
     parser.add_argument('--modified_layer_num', default=1, type=int, choices=[1, 2, 3], help='model')
     parser.add_argument('--start_idx', default=0, type=int,  help='model')

@@ -1,4 +1,5 @@
 import os
+import glob
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 from functools import partial
 from tqdm import tqdm
@@ -478,7 +479,126 @@ def plot_top_feature_activations(results, layer, args, top_k, languages):
     print(f"Plot saved to {save_path}")
 
 
+def plot_neuron_count_across_layers(args):
+    """
+    전체 레이어에 걸친 뉴런 점수 중 상위 0.01%를 특정성 기준으로 삼아,
+    각 레이어에 해당 기준을 넘는 뉴런이 몇 개인지 분포를 시각화합니다.
+    """
+    print("--- Starting Language-Specific Neuron Count Plotting Across Layers ---")
+
+    model_name_safe = args.model_path.replace("/", "_")
+    
+    results_dir = getattr(args, 'analysis_results_dir', './neuron_analysis_results')
+    plot_dir = getattr(args, 'plot_output_dir', './plot/neuron_layer_distribution')
+
+    model_results_path = os.path.join(results_dir, model_name_safe)
+    plot_save_dir = os.path.join(plot_dir)
+    os.makedirs(plot_save_dir, exist_ok=True)
+
+    print(f"Loading results from: {model_results_path}")
+    print(f"Plots will be saved to: {plot_save_dir}")
+
+    analysis_files = sorted(glob.glob(os.path.join(model_results_path, "layer_*_top_neurons_combined.pth")))
+
+    if not analysis_files:
+        print(f"Error: No analysis files found in {model_results_path}. Please run neuron_analysis.py first.")
+        return
+
+    # 1단계: 모든 레이어의 점수를 수집하여 언어별 임계값(threshold) 계산
+    first_file_data = torch.load(analysis_files[0])
+    languages = first_file_data['languages']
+    num_layers = len(analysis_files)
+    all_scores_per_lang = [[] for _ in languages]
+
+    print("Pass 1: Gathering all scores to determine global thresholds...")
+    for file_path in tqdm(analysis_files, desc="Gathering Scores"):
+        data = torch.load(file_path)
+        scores = data['scores'] # Shape: [num_languages, d_mlp]
+        for i in range(len(languages)):
+            all_scores_per_lang[i].append(scores[i])
+
+    thresholds = []
+    for i, lang in enumerate(languages):
+        lang_scores_tensor = torch.cat(all_scores_per_lang[i])
+        # 상위 1%에 해당하는 분위수 계산 (0.99 분위수)
+        threshold = torch.quantile(lang_scores_tensor, 0.99)
+        thresholds.append(threshold)
+        print(f"Global top 0.01% threshold for {lang.upper()}: {threshold.item():.4f}")
+
+    # 2단계: 각 레이어에서 임계값을 넘는 뉴런 수 계산
+    neuron_counts = torch.zeros(len(languages), num_layers)
+    print("Pass 2: Counting neurons above threshold in each layer...")
+    for layer_idx, file_path in enumerate(tqdm(analysis_files, desc="Counting Neurons")):
+        data = torch.load(file_path)
+        scores = data['scores']
+        for lang_idx in range(len(languages)):
+            count = (scores[lang_idx] > thresholds[lang_idx]).sum().item()
+            neuron_counts[lang_idx, layer_idx] = count
+
+    # 3단계: 시각화
+    plt.figure(figsize=(15, 8))
+    layers = range(num_layers)
+    
+    for i, lang in enumerate(languages):
+        plt.plot(layers, neuron_counts[i].numpy(), marker='o', linestyle='-', label=lang.upper())
+
+    plt.title(f"Distribution of Top 1% Language-Specific Neurons Across Layers for {args.model}", fontsize=16)
+    plt.xlabel("Layer", fontsize=12)
+    plt.ylabel(f"Count of Language-Specific Neurons", fontsize=12)
+    plt.xticks(layers)
+    plt.legend(title="Language")
+    plt.grid(True, which='both', linestyle='--', linewidth=0.5)
+    plt.tight_layout()
+
+    save_path = os.path.join(plot_save_dir, f"{model_name_safe}_neuron_distribution_across_layers_all_lan.png")
+    plt.savefig(save_path)
+    plt.close()
+
+    print(f"--- Plotting complete. Plot saved to {save_path} ---")
+
+
+    # 4단계: 개별 언어 플롯 시각화                                                                                                                                                                                                                                        
+    for i, lang in enumerate(languages):                                                                                                                                                                                                                                  
+        plt.figure(figsize=(15, 8))
+        plt.plot(layers, neuron_counts[i].numpy(), marker='o', linestyle='-', label=lang.upper(), color=f'C{i}')
+        plt.title(f"Distribution of Top 1% {lang.upper()}-Specific Neurons Across Layers for {args.model}", fontsize=16)
+        plt.xlabel("Layer", fontsize=12)
+        plt.ylabel("Count of Language-Specific Neurons", fontsize=12)
+        plt.xticks(layers, rotation=45)
+        plt.legend()
+        plt.grid(True, which='both', linestyle='--', linewidth=0.5)
+        plt.tight_layout()
+        lang_save_dir = os.path.join(plot_save_dir, lang)
+        os.makedirs(lang_save_dir, exist_ok=True)
+                                                                                                                                                                                                                                                                        
+        save_path_individual = os.path.join(lang_save_dir, f"{model_name_safe}_neuron_dist_layer_{lang}.png")
+        plt.savefig(save_path_individual)
+        plt.close()
+        print(f"Individual plot for {lang.upper()} saved to {save_path_individual}")
+                                                                                                                                                                                                                                                                                    
+    print(f"--- Plotting complete. ---")      
+
+
+
 if __name__ == "__main__":
     args = load_args()
-    topk_feature_results_cal(args)
-    # change_activation_print_ce_corpus_gen(args)
+    
+    # --mode 인자를 사용하여 실행할 분석을 선택할 수 있습니다.
+    # 예: python SAE/inference.py --mode plot_neuron_count
+    mode = getattr(args, 'mode', 'default')
+
+    if mode == 'plot_neuron_count':
+        # 뉴런의 레이어별 분포 플로팅
+        plot_neuron_count_across_layers(args)
+    elif mode == 'plot_neuron_distribution':
+        # 뉴런 특정성 점수 분포 플로팅 (이전 함수)
+        # plot_neuron_specificity_distribution(args) # 이 함수는 이제 plot_neuron_count_across_layers로 대체되었습니다.
+        print("This mode is deprecated. Use 'plot_neuron_count' instead.")
+    elif mode == 'code_switch':
+        code_switch_analysis(args)
+    elif mode == 'topk_feature':
+        topk_feature_results_cal(args)
+    else:
+        # 기본으로 실행되던 함수 또는 에러 메시지
+        print(f"Unknown or default mode: {mode}. Please specify a mode.")
+        print("Available modes: plot_neuron_count, code_switch, topk_feature")
