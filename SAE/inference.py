@@ -7,6 +7,7 @@ import torch
 import numpy as np
 from transformers import AutoModelForCausalLM,  AutoTokenizer
 import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
 from utils import load_args, load_sae
 from tqdm import tqdm
 
@@ -345,14 +346,28 @@ def topk_feature_results_cal(args):
     """
     print("Starting Top-K Feature Analysis for Plotting...")
     lan_list = ['en', 'es', 'fr', 'ja', 'ko', 'pt', 'th', 'vi', 'zh', 'ar']
+    # lan_list = ['ko', 'en']
     top_k = 10  # How many top features to analyze for each language
 
     try:
-        multilingual_data = pd.read_json('./data/multilingual_data_test.jsonl', lines=True)
+        # multilingual_data = pd.read_json('./data/metamath_thinking.jsonl', lines=True)
+        multilingual_data = pd.read_json('./data/multilingual_data.jsonl', lines=True)
         tokenizer = AutoTokenizer.from_pretrained(args.model_path)
     except FileNotFoundError:
         print("Error: Prerequisite file not found. Ensure model_path is correct and test data exists.")
         return
+    
+    # try:
+    #     font_path = fm.findfont(fm.FontProperties(family='NanumGothic'))
+    #     plt.rcParams['font.family'] = 'NanumGothic'
+    #     print(f"NanumGothic font found at: {font_path}")
+    # except ValueError:
+    #     print("Warning: 'NanumGothic' font not found. Korean text may not display correctly.")
+    #     print("Please install a Korean font (e.g., run 'sudo apt-get install -y fonts-nanum*')")
+    #     print("and clear matplotlib cache ('rm -rf ~/.cache/matplotlib/*').")
+    # # 마이너스 부호가 깨지는 것을 방지
+    # plt.rcParams['axes.unicode_minus'] = False
+    # # --- 한글 폰트 설정 끝 ---
 
     for layer in tqdm(range(args.layer_num), desc="Processing Layers"):
         layer_results = []
@@ -385,14 +400,24 @@ def topk_feature_results_cal(args):
                     except (IndexError, KeyError):
                         continue
 
-                    activations_for_feature = sae_acts_for_sentence[0, :, feature_idx]
-                    max_val_in_sentence, max_idx_in_sentence = torch.max(activations_for_feature, dim=0)
+                    # BOS 토큰(인덱스 0)을 제외하고(1:) 최대 활성화 값을 찾음
+                    activations_for_feature = sae_acts_for_sentence[0, 1:, feature_idx]
 
-                    if max_val_in_sentence > max_activation_val:
-                        max_activation_val = max_val_in_sentence.item()
-                        inputs = tokenizer.encode(row['text'], return_tensors="pt")
-                        token_id = inputs[0, max_idx_in_sentence.item()]
-                        best_token = tokenizer.decode(token_id)
+                    # 문장에 BOS 토큰 외 다른 토큰이 있는지 확인
+                    if activations_for_feature.numel() > 0:
+                        max_val_in_sentence, max_idx_in_slice = torch.max(activations_for_feature, dim=0)
+
+                        if max_val_in_sentence > max_activation_val:
+                            max_activation_val = max_val_in_sentence.item()
+
+                            # 슬라이스된 텐서의 인덱스이므로 +1을 하여 원본 인덱스를 찾음
+                            original_token_idx = max_idx_in_slice.item() + 1
+
+                            inputs = tokenizer.encode(row['text'], return_tensors="pt")
+                            # 문장이 너무 길어 토큰화가 잘리는 경우를 대비한 방어 코드
+                            if original_token_idx < inputs.shape[1]:
+                                token_id = inputs[0, original_token_idx]
+                                best_token = tokenizer.decode(token_id)
 
                 layer_results.append({
                     "lan": lan_name,
@@ -455,5 +480,5 @@ def plot_top_feature_activations(results, layer, args, top_k, languages):
 
 if __name__ == "__main__":
     args = load_args()
-    # topk_feature_results_cal(args)
-    change_activation_print_ce_corpus_gen(args)
+    topk_feature_results_cal(args)
+    # change_activation_print_ce_corpus_gen(args)

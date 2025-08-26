@@ -3,13 +3,12 @@ import numpy as np
 from transformers import AutoModelForCausalLM,  AutoTokenizer
 import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-
+import json
 import pandas as pd
 from tqdm import tqdm
 from utils import load_args,load_sae
 
 torch.set_grad_enabled(False)  # avoid blowing up mem
-
 
 def gather_residual_activations(model, target_layer, inputs):
     target_act = None
@@ -30,11 +29,12 @@ def hf_model_gen(args):
     tokenizer = AutoTokenizer.from_pretrained(args.model_path)
 
     multilingual_data = pd.read_json('./data/multilingual_data.jsonl', lines=True)
+    # multilingual_data = pd.read_json('./data/metamath_thinking.jsonl', lines=True)
 
     for layer in tqdm(range(model.config.num_hidden_layers)):
         sae = load_sae(layer,args)
         all_sae_acts = []
-        for prompt in tqdm(multilingual_data['text'].to_list()):
+        for prompt in tqdm(multilingual_data['text'].tolist()):
             # Use the tokenizer to convert it to tokens. Note that this implicitly adds a special "Beginning of Sequence" or <bos> token to the start
             inputs = tokenizer.encode(prompt, return_tensors="pt", add_special_tokens=True).to("cuda")
             target_act = gather_residual_activations(model, layer, inputs)
