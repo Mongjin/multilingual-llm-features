@@ -50,13 +50,22 @@ def analyze_and_save_neuron_indices(args):
 
         # 2. 엔트로피 점수 계산
         probs = F.relu(avg_activations.T) # [langs, d_mlp]
-        norm_probs = probs / (probs.sum(dim=0, keepdim=True) + 1e-8)
-        entropy = -torch.sum(norm_probs * torch.log(norm_probs + 1e-9), dim=0) # [d_mlp]
+        # norm_probs = probs / (probs.sum(dim=0, keepdim=True) + 1e-8)
+        probs = probs / probs.sum(dim=0, keepdim=True).clamp_min(1e-8)
+        norm_probs = probs.clamp_min(1e-12)  # log(0) 방지
+        # entropy = -torch.sum(norm_probs * torch.log(norm_probs + 1e-9), dim=0) # [d_mlp]
+        entropy = -torch.sum(norm_probs * torch.log(norm_probs), dim=0)
         entropy_scores = -entropy
 
         # 3. 점수 결합 및 정렬
         norm_act_diff = torch.stack([normalize_scores(s) for s in act_diff_scores])
         norm_entropy = normalize_scores(entropy_scores)
+
+        # Check the scale of normalized scores
+        print(f"\nLayer {layer}:")
+        print(f"  norm_act_diff - Min: {norm_act_diff.min():.4f}, Max: {norm_act_diff.max():.4f}, Mean: {norm_act_diff.mean():.4f}")
+        print(f"  norm_entropy  - Min: {norm_entropy.min():.4f}, Max: {norm_entropy.max():.4f}, Mean: {norm_entropy.mean():.4f}")
+
         combined_scores = norm_act_diff * norm_entropy.unsqueeze(0)
 
         sorted_indices = torch.argsort(combined_scores, dim=1, descending=True)

@@ -481,7 +481,7 @@ def plot_top_feature_activations(results, layer, args, top_k, languages):
 
 def plot_neuron_count_across_layers(args):
     """
-    전체 레이어에 걸친 뉴런 점수 중 상위 0.01%를 특정성 기준으로 삼아,
+    전체 레이어에 걸친 뉴런 점수 중 상위 1%를 특정성 기준으로 삼아,
     각 레이어에 해당 기준을 넘는 뉴런이 몇 개인지 분포를 시각화합니다.
     """
     print("--- Starting Language-Specific Neuron Count Plotting Across Layers ---")
@@ -523,7 +523,7 @@ def plot_neuron_count_across_layers(args):
         # 상위 1%에 해당하는 분위수 계산 (0.99 분위수)
         threshold = torch.quantile(lang_scores_tensor, 0.99)
         thresholds.append(threshold)
-        print(f"Global top 0.01% threshold for {lang.upper()}: {threshold.item():.4f}")
+        print(f"Global top 1% threshold for {lang.upper()}: {threshold.item():.4f}")
 
     # 2단계: 각 레이어에서 임계값을 넘는 뉴런 수 계산
     neuron_counts = torch.zeros(len(languages), num_layers)
