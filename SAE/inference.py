@@ -816,7 +816,7 @@ def plot_sae_feature_distribution_neuron_logic(args):
     torch.save(top_features_per_layer, save_path_top_features)
     print(f"Top 1% feature indices saved to {save_path_top_features}")
 
-    # Plotting
+    # Plotting combined chart
     for i, lang in enumerate(languages):
         if i < feature_counts.shape[0]:
             plt.plot(layers, feature_counts[i].numpy(), marker='o', linestyle='-', label=f"{lang.upper()}")
@@ -832,7 +832,31 @@ def plot_sae_feature_distribution_neuron_logic(args):
     save_path_plot = os.path.join(plot_dir, f"{model_name_safe}_feature_distribution.png")
     plt.savefig(save_path_plot)
     plt.close()
-    print(f"Plot saved to {save_path_plot}")
+    print(f"Combined plot saved to {save_path_plot}")
+
+    # Individual language plots
+    print("Generating individual plots for each language...")
+    for lang_idx, lang in enumerate(languages):
+        plt.figure(figsize=(15, 8))
+        
+        if lang_idx < feature_counts.shape[0]:
+            plt.plot(layers, feature_counts[lang_idx].numpy(), marker='o', linestyle='-')
+
+        plt.title(f"Distribution of Top 1% {lang.upper()}-Specific SAE Features (Neuron Logic) for {args.model_path}", fontsize=16)
+        plt.xlabel("Layer", fontsize=12)
+        plt.ylabel("Count of Language-Specific Features", fontsize=12)
+        plt.xticks(layers)
+        plt.grid(True, which='both', linestyle='--', linewidth=0.5)
+        plt.tight_layout()
+
+        # Create a subdirectory for the language
+        lang_save_dir = os.path.join(plot_dir, lang)
+        os.makedirs(lang_save_dir, exist_ok=True)
+
+        save_path_individual = os.path.join(lang_save_dir, f"{model_name_safe}_feature_distribution_{lang}.png")
+        plt.savefig(save_path_individual)
+        plt.close()
+        print(f"Individual plot for {lang.upper()} saved to {save_path_individual}")
     
     print(f"--- SAE Feature Plotting (Neuron Logic) complete. ---")
 
