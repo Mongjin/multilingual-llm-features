@@ -777,8 +777,8 @@ def plot_sae_feature_distribution_neuron_logic(args):
         if not all_scores_per_lang[i]: continue
         lang_scores_tensor = torch.cat(all_scores_per_lang[i])
         if lang_scores_tensor.numel() == 0: continue
-        # Using 99th percentile for direct comparison with neuron logic
-        threshold = torch.quantile(lang_scores_tensor, 0.99)
+        # Using 95th percentile as the threshold
+        threshold = torch.quantile(lang_scores_tensor, 0.95)
         thresholds.append(threshold)
 
     if not thresholds:
@@ -788,7 +788,7 @@ def plot_sae_feature_distribution_neuron_logic(args):
     # Pass 2: Counting features and saving top 1% indices
     feature_counts = torch.zeros(len(languages), num_layers)
     top_features_per_layer = []
-    print("Pass 2: Counting features and saving top 1% indices...")
+    print("Pass 2: Counting features and saving top 5% indices...")
     for layer_idx, file_path in enumerate(tqdm(analysis_files, desc="Analyzing Features")):
         data = torch.load(file_path)
         scores = data['all_scores']
@@ -812,16 +812,16 @@ def plot_sae_feature_distribution_neuron_logic(args):
         top_features_per_layer.append(top_features_this_layer)
 
     # Save top features
-    save_path_top_features = os.path.join(top_features_dir, f"top_1_percent_features.pth")
+    save_path_top_features = os.path.join(top_features_dir, f"top_5_percent_features.pth")
     torch.save(top_features_per_layer, save_path_top_features)
-    print(f"Top 1% feature indices saved to {save_path_top_features}")
+    print(f"Top 5% feature indices saved to {save_path_top_features}")
 
     # Plotting combined chart
     for i, lang in enumerate(languages):
         if i < feature_counts.shape[0]:
             plt.plot(layers, feature_counts[i].numpy(), marker='o', linestyle='-', label=f"{lang.upper()}")
 
-    plt.title(f"Distribution of Top 1% Language-Specific SAE Features (Neuron Logic) for {args.model_path}", fontsize=16)
+    plt.title(f"Distribution of Top 5% Language-Specific SAE Features (Score R -> Entropy F)", fontsize=16)
     plt.xlabel("Layer", fontsize=12)
     plt.ylabel("Count of Language-Specific Features", fontsize=12)
     plt.xticks(layers)
@@ -842,7 +842,7 @@ def plot_sae_feature_distribution_neuron_logic(args):
         if lang_idx < feature_counts.shape[0]:
             plt.plot(layers, feature_counts[lang_idx].numpy(), marker='o', linestyle='-')
 
-        plt.title(f"Distribution of Top 1% {lang.upper()}-Specific SAE Features (Neuron Logic) for {args.model_path}", fontsize=16)
+        plt.title(f"Distribution of Top 5% {lang.upper()}-Specific SAE Features (Score R -> Entropy F) (Total: {sum(feature_counts[lang_idx])})", fontsize=16)
         plt.xlabel("Layer", fontsize=12)
         plt.ylabel("Count of Language-Specific Features", fontsize=12)
         plt.xticks(layers)
