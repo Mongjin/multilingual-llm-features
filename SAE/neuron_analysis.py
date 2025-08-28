@@ -132,16 +132,84 @@ def analyze_and_save_neuron_indices(args):
 
     print(f"Analysis complete. Results saved in {output_dir}")
 
+def find_multilingual_neurons(args):
+    """
+    Identifies and saves indices of multilingual neurons.
+    A multilingual neuron is defined as one that shows high activation across all languages.
+    """
+    model_name_safe = args.model_name.replace("/", "_")
+    input_dir = os.path.join(args.input_dir, model_name_safe)
+    output_dir = os.path.join(args.output_dir, model_name_safe)
+    os.makedirs(output_dir, exist_ok=True)
+
+    print(f"Searching for multilingual neurons using activations from: {input_dir}")
+    print(f"Multilingual neuron indices will be saved to: {output_dir}")
+
+    activation_files = sorted(glob.glob(os.path.join(input_dir, "layer_*_avg_activations.pth")))
+
+    if not activation_files:
+        print(f"Error: No activation files found in {input_dir}. Please run find_language_neurons.py first.")
+        return
+
+    for file_path in tqdm(activation_files, desc="Analyzing Layers for Multilingual Neurons"):
+        data = torch.load(file_path)
+        layer = int(os.path.basename(file_path).split('_')[1])
+
+        # Process MLP activations
+        if 'avg_activations_mlp' in data:
+            avg_activations_mlp = data['avg_activations_mlp']  # [d_mlp, num_languages]
+            
+            # Multilingual score: minimum activation across all languages
+            multilingual_score_mlp = torch.min(avg_activations_mlp, dim=1).values
+            
+            sorted_scores_mlp, sorted_indices_mlp = torch.sort(multilingual_score_mlp, descending=True)
+
+            save_path_mlp = os.path.join(output_dir, f"layer_{layer}_multilingual_neurons_mlp.pth")
+            data_to_save_mlp = {
+                'sorted_indices': sorted_indices_mlp.cpu(),
+                'sorted_scores': sorted_scores_mlp.cpu(),
+                'languages': data['languages']
+            }
+            torch.save(data_to_save_mlp, save_path_mlp)
+
+        # Process Attention activations
+        attn_results = {}
+        for key in ['avg_activations_q', 'avg_activations_k', 'avg_activations_v']:
+            if key in data:
+                avg_activations_attn = data[key]  # [n_heads, d_head, num_languages]
+                avg_activations_attn_flat = avg_activations_attn.permute(2, 0, 1).reshape(len(data['languages']), -1).T
+
+                multilingual_score_attn = torch.min(avg_activations_attn_flat, dim=1).values
+                sorted_scores_attn, sorted_indices_attn = torch.sort(multilingual_score_attn, descending=True)
+                
+                attn_results[key] = {
+                    'sorted_indices': sorted_indices_attn.cpu(),
+                    'sorted_scores': sorted_scores_attn.cpu(),
+                }
+        
+        if attn_results:
+            save_path_attn = os.path.join(output_dir, f"layer_{layer}_multilingual_neurons_attn.pth")
+            attn_results['languages'] = data['languages']
+            torch.save(attn_results, save_path_attn)
+
+    print(f"Multilingual neuron analysis complete. Results saved in {output_dir}")
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Analyze pre-computed activations to find language-specific neurons.")
+    parser = argparse.ArgumentParser(description="Analyze pre-computed activations to find language-specific or multilingual neurons.")
     
     parser.add_argument("--model_name", type=str, default="google/gemma-2-2b", help="Model name for finding the correct subdirectory.")
     parser.add_argument("--input_dir", type=str, default="./neuron_avg_activations", help="Directory where average activation files are stored.")
     parser.add_argument("--output_dir", type=str, default="./neuron_analysis_results", help="Directory to save the final analysis results.")
-    parser.add_argument("--entropy_quantile", type=float, default=0.25, help="Quantile for low-entropy filtering.")
+    parser.add_argument("--entropy_quantile", type=float, default=0.25, help="Quantile for low-entropy filtering for language-specific neurons.")
+    parser.add_argument("--analysis_type", type=str, default="specific", choices=["specific", "multilingual"], help="Type of analysis to perform.")
 
     args = parser.parse_args()
-    analyze_and_save_neuron_indices(args)
+
+    if args.analysis_type == "specific":
+        analyze_and_save_neuron_indices(args)
+    elif args.analysis_type == "multilingual":
+        find_multilingual_neurons(args)
 
 if __name__ == "__main__":
     main()
