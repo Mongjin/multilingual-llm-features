@@ -11,64 +11,92 @@ import numpy as np
 import torch
 from utils import load_args, load_sae
 
-
-
 torch.set_grad_enabled(False)  # avoid blowing up mem
 
+def calculate_entropy(activations, epsilon=1e-9):
+    """Calculates the entropy of a feature's activations."""
+    activations = torch.clamp(activations, min=0)
+    total_activation = activations.sum()
+    if total_activation == 0:
+        return 0.0
+    probs = activations / total_activation
+    probs += epsilon
+    entropy = -torch.sum(probs * torch.log(probs))
+    return entropy.item()
 
-# Sorted indices based on descending values of the monolingual metric (absolute activation differences)
-def generate_top_index_magnitude(args):
-    for layer in tqdm(range(args.layer_num)):
-        # layer=0
+def generate_top_feature_indices(args, entropy_quantile=0.25):
+    """
+    Generates and saves indices and scores of top language-specific features
+    based on both activation magnitude and low entropy.
+    """
+    for layer in tqdm(range(args.layer_num), desc="Processing Layers"):
         file_dir = f'./sae_acts/{args.model}/layer_{layer}/'
-        all_sae_acts = torch.load(os.path.join(file_dir, 'sae_acts.pth'))
-    
-        all_sae_acts_per_token = []
-        for acts in all_sae_acts:
-            all_sae_acts_per_token.append(acts[0, 1:, :])
+        os.makedirs(file_dir, exist_ok=True)
         
-        # 데이터셋 정보를 직접 로드하여 언어 목록과 그룹을 동적으로 찾음
+        try:
+            all_sae_acts = torch.load(os.path.join(file_dir, 'sae_acts.pth'))
+        except FileNotFoundError:
+            print(f"SAE activations file not found for layer {layer}. Skipping.")
+            continue
+
+        all_sae_acts_per_token = torch.cat([acts[0, 1:, :] for acts in all_sae_acts if acts.shape[1] > 1])
+
+        num_features = all_sae_acts_per_token.shape[-1]
+        feature_entropies = torch.zeros(num_features)
+        for i in tqdm(range(num_features), desc=f"Calculating Entropy for Layer {layer}", leave=False):
+            feature_activations = all_sae_acts_per_token[:, i]
+            feature_entropies[i] = calculate_entropy(feature_activations)
+        
+        low_entropy_threshold = torch.quantile(feature_entropies, entropy_quantile)
+        low_entropy_feature_indices = (feature_entropies <= low_entropy_threshold).nonzero(as_tuple=True)[0]
+        low_entropy_set = set(low_entropy_feature_indices.tolist())
+
         multilingual_data = pd.read_json('./data/multilingual_data.jsonl', lines=True)
-        # multilingual_data = pd.read_json('./data/metamath_thinking.jsonl', lines=True)
-        # 데이터에 존재하는 고유한 언어 목록을 가져옴
         lan_list = multilingual_data['lan'].unique()
         num_lan = len(lan_list)
 
         avg_act_per_lan = []
-        # 실제 언어 이름을 기준으로 반복
+        all_sae_acts_per_token_list = [acts[0, 1:, :] for acts in all_sae_acts if acts.shape[1] > 1]
+        
+        lan_indices_map = {lan_name: [] for lan_name in lan_list}
+        for i, lan_name in enumerate(multilingual_data['lan']):
+            lan_indices_map[lan_name].append(i)
+
         for lan_name in lan_list:
-            # 현재 언어(lan_name)에 해당하는 모든 문장의 인덱스를 찾음
-            lan_indices = multilingual_data.index[multilingual_data['lan'] == lan_name].tolist()
-
-            # 해당 인덱스를 사용하여 활성화 값 리스트에서 올바른 활성화 값을 추출
-            lan_acts = [all_sae_acts_per_token[i] for i in lan_indices]
-
-            # 추출된 활성화 값들을 하나로 합침
-            all_sae_acts_per_token_lan = torch.concat(lan_acts)
+            lan_acts = [all_sae_acts_per_token_list[i] for i in lan_indices_map[lan_name]]
+            if not lan_acts: continue
+            all_sae_acts_per_token_lan = torch.cat(lan_acts)
             avg_act = all_sae_acts_per_token_lan.mean(dim=-2)
             avg_act_per_lan.append(avg_act)
-
         avg_act_per_lan = torch.stack(avg_act_per_lan)
 
-        # avg_act_per_lan = []
-        # for i in range(num_lan):
-        #     all_sae_acts_per_token_lan = torch.concat(all_sae_acts_per_token[100*i:100*(i+1)])
-        #     avg_act = all_sae_acts_per_token_lan.mean(dim=-2)
-        #     avg_act_per_lan.append(avg_act)
-        # avg_act_per_lan = torch.stack(avg_act_per_lan)
+        top_indices_magnitude_only = []
+        top_indices_mag_and_entropy = {}
 
-        top_index_per_lan = []
-        top_ratio_per_lan = []
-        for i in range(num_lan):
-            avg_act_difference_per_lan=avg_act_per_lan[i]-torch.cat([avg_act_per_lan[:i], avg_act_per_lan[i+1:]], dim=0).mean(dim=0)
-            sorted_values, sorted_indices=torch.sort(avg_act_difference_per_lan, descending=True)
-            top_ratio_per_lan.append(sorted_values.unsqueeze(0))
-            top_index_per_lan.append(sorted_indices.unsqueeze(0))
-        top_index_per_lan = torch.concat(top_index_per_lan)
-        top_ratio_per_lan = torch.concat(top_ratio_per_lan)
-        torch.save(top_index_per_lan, os.path.join(file_dir, 'top_index_per_lan_magnitude.pth'))
+        for i, lan_name in enumerate(lan_list):
+            avg_act_difference_per_lan = avg_act_per_lan[i] - torch.cat([avg_act_per_lan[:i], avg_act_per_lan[i+1:]], dim=0).mean(dim=0)
+            sorted_values_magnitude, sorted_indices_magnitude = torch.sort(avg_act_difference_per_lan, descending=True)
+            
+            top_indices_magnitude_only.append(sorted_indices_magnitude.unsqueeze(0))
+
+            is_low_entropy = torch.zeros(num_features, dtype=torch.bool)
+            if low_entropy_set:
+                 is_low_entropy[list(low_entropy_set)] = True
+
+            entropy_filtered_mask = is_low_entropy[sorted_indices_magnitude]
+            
+            filtered_indices = sorted_indices_magnitude[entropy_filtered_mask]
+            filtered_scores = sorted_values_magnitude[entropy_filtered_mask]
+            
+            top_indices_mag_and_entropy[lan_name] = (filtered_indices.cpu(), filtered_scores.cpu())
+
+        top_indices_magnitude_only = torch.cat(top_indices_magnitude_only)
+        torch.save(top_indices_magnitude_only, os.path.join(file_dir, 'top_index_per_lan_magnitude.pth'))
+
+        torch.save(top_indices_mag_and_entropy, os.path.join(file_dir, 'top_index_per_lan_magnitude_entropy.pth'))
+        print(f"Saved magnitude-only and magnitude+entropy filtered (indices, scores) for layer {layer}.")
 
 
 if __name__ == "__main__":
     args = load_args()
-    generate_top_index_magnitude(args)
+    generate_top_feature_indices(args)

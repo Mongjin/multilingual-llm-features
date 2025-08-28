@@ -8,18 +8,10 @@ import glob
 
 torch.set_grad_enabled(False)
 
-def normalize_scores(scores):
-    """Min-Max 정규화를 통해 점수를 0과 1 사이로 조정합니다."""
-    min_val = scores.min()
-    max_val = scores.max()
-    if max_val == min_val:
-        return torch.zeros_like(scores)
-    return (scores - min_val) / (max_val - min_val)
-
 def analyze_and_save_neuron_indices(args):
     """
-    저장된 평균 활성화 값을 불러와, 활성화 차이와 엔트로피를 결합한 점수로
-    언어 특정적 뉴런의 인덱스를 정렬하여 저장합니다.
+    저장된 평균 활성화 값을 불러와, 활성화 차이 점수를 계산하고 엔트로피로 필터링하여
+    언어 특정적 뉴런 정보를 저장합니다.
     """
     model_name_safe = args.model_name.replace("/", "_")
     input_dir = os.path.join(args.input_dir, model_name_safe)
@@ -37,48 +29,107 @@ def analyze_and_save_neuron_indices(args):
 
     for file_path in tqdm(activation_files, desc="Analyzing Layers"):
         data = torch.load(file_path)
-        avg_activations = data['avg_activations'] # [d_mlp, num_languages]
         languages = data['languages']
         layer = int(os.path.basename(file_path).split('_')[1])
 
-        # 1. 활성화 차이 점수 계산
-        all_lang_indices = list(range(len(languages)))
-        act_diff_scores = torch.zeros(len(languages), avg_activations.shape[0]) # [langs, d_mlp]
-        for i, lang in enumerate(languages):
-            other_indices = all_lang_indices[:i] + all_lang_indices[i+1:]
-            act_diff_scores[i] = avg_activations[:, i] - avg_activations[:, other_indices].mean(dim=1)
+        # Process MLP activations
+        if 'avg_activations_mlp' in data:
+            avg_activations_mlp = data['avg_activations_mlp'] # [d_mlp, num_languages]
+            
+            # 1. 엔트로피 계산
+            probs_mlp = F.relu(avg_activations_mlp.T) # [langs, d_mlp]
+            probs_mlp = probs_mlp / probs_mlp.sum(dim=0, keepdim=True).clamp_min(1e-8)
+            norm_probs_mlp = probs_mlp.clamp_min(1e-12)
+            entropy_mlp = -torch.sum(norm_probs_mlp * torch.log(norm_probs_mlp), dim=0)
+            
+            low_entropy_threshold = torch.quantile(entropy_mlp, args.entropy_quantile)
+            low_entropy_indices = (entropy_mlp <= low_entropy_threshold).nonzero(as_tuple=True)[0]
 
-        # 2. 엔트로피 점수 계산
-        probs = F.relu(avg_activations.T) # [langs, d_mlp]
-        # norm_probs = probs / (probs.sum(dim=0, keepdim=True) + 1e-8)
-        probs = probs / probs.sum(dim=0, keepdim=True).clamp_min(1e-8)
-        norm_probs = probs.clamp_min(1e-12)  # log(0) 방지
-        # entropy = -torch.sum(norm_probs * torch.log(norm_probs + 1e-9), dim=0) # [d_mlp]
-        entropy = -torch.sum(norm_probs * torch.log(norm_probs), dim=0)
-        entropy_scores = -entropy
+            # 2. 활성화 차이 점수 계산
+            all_lang_indices = list(range(len(languages)))
+            act_diff_scores_mlp = torch.zeros(len(languages), avg_activations_mlp.shape[0]) # [langs, d_mlp]
+            for i, lang in enumerate(languages):
+                other_indices = all_lang_indices[:i] + all_lang_indices[i+1:]
+                act_diff_scores_mlp[i] = avg_activations_mlp[:, i] - avg_activations_mlp[:, other_indices].mean(dim=1)
 
-        # 3. 점수 결합 및 정렬
-        norm_act_diff = torch.stack([normalize_scores(s) for s in act_diff_scores])
-        norm_entropy = normalize_scores(entropy_scores)
+            # 3. 엔트로피 필터링 후 정렬
+            sorted_scores_mlp, sorted_indices_mlp = torch.sort(act_diff_scores_mlp, dim=1, descending=True)
+            
+            filtered_indices_list = []
+            filtered_scores_list = []
+            low_entropy_set = set(low_entropy_indices.tolist())
+            for i in range(len(languages)):
+                is_low_entropy = torch.tensor([idx.item() in low_entropy_set for idx in sorted_indices_mlp[i]], dtype=torch.bool)
+                
+                filtered_indices = sorted_indices_mlp[i][is_low_entropy]
+                filtered_scores = sorted_scores_mlp[i][is_low_entropy]
+                
+                filtered_indices_list.append(filtered_indices)
+                filtered_scores_list.append(filtered_scores)
 
-        # Check the scale of normalized scores
-        print(f"\nLayer {layer}:")
-        print(f"  norm_act_diff - Min: {norm_act_diff.min():.4f}, Max: {norm_act_diff.max():.4f}, Mean: {norm_act_diff.mean():.4f}")
-        print(f"  norm_entropy  - Min: {norm_entropy.min():.4f}, Max: {norm_entropy.max():.4f}, Mean: {norm_entropy.mean():.4f}")
+            # 4. MLP 결과 저장
+            save_path_mlp = os.path.join(output_dir, f"layer_{layer}_top_neurons_mlp.pth")
+            data_to_save_mlp = {
+                'filtered_indices': {lang: idx.cpu() for lang, idx in zip(languages, filtered_indices_list)},
+                'filtered_scores': {lang: score.cpu() for lang, score in zip(languages, filtered_scores_list)},
+                'all_scores': act_diff_scores_mlp.cpu(),
+                'low_entropy_indices': low_entropy_indices.cpu(),
+                'languages': languages
+            }
+            torch.save(data_to_save_mlp, save_path_mlp)
 
-        combined_scores = norm_act_diff * norm_entropy.unsqueeze(0)
+        # Process Attention activations
+        attn_results = {}
+        for key in ['avg_activations_q', 'avg_activations_k', 'avg_activations_v']:
+            if key in data:
+                avg_activations_attn = data[key] # [n_heads, d_head, num_languages]
+                avg_activations_attn_flat = avg_activations_attn.permute(2, 0, 1).reshape(len(languages), -1).T
 
-        sorted_indices = torch.argsort(combined_scores, dim=1, descending=True)
+                # 1. 엔트로피 계산
+                probs_attn = F.relu(avg_activations_attn_flat.T)
+                probs_attn = probs_attn / probs_attn.sum(dim=0, keepdim=True).clamp_min(1e-8)
+                norm_probs_attn = probs_attn.clamp_min(1e-12)
+                entropy_attn = -torch.sum(norm_probs_attn * torch.log(norm_probs_attn), dim=0)
 
-        # 4. 결과 저장
-        save_path = os.path.join(output_dir, f"layer_{layer}_top_neurons_combined.pth")
-        data_to_save = {
-            'sorted_indices': sorted_indices.cpu(),
-            'scores': combined_scores.cpu(),
-            'languages': languages
-        }
-        torch.save(data_to_save, save_path)
-    
+                low_entropy_threshold_attn = torch.quantile(entropy_attn, args.entropy_quantile)
+                low_entropy_indices_attn = (entropy_attn <= low_entropy_threshold_attn).nonzero(as_tuple=True)[0]
+
+                # 2. 활성화 차이 점수 계산
+                all_lang_indices = list(range(len(languages)))
+                act_diff_scores_attn = torch.zeros(len(languages), avg_activations_attn_flat.shape[0])
+                for i, lang in enumerate(languages):
+                    other_indices = all_lang_indices[:i] + all_lang_indices[i+1:]
+                    act_diff_scores_attn[i] = avg_activations_attn_flat[:, i] - avg_activations_attn_flat[:, other_indices].mean(dim=1)
+
+                # 3. 엔트로피 필터링 후 정렬
+                sorted_scores_attn, sorted_indices_attn = torch.sort(act_diff_scores_attn, dim=1, descending=True)
+
+                filtered_indices_list_attn = []
+                filtered_scores_list_attn = []
+                low_entropy_set_attn = set(low_entropy_indices_attn.tolist())
+                for i in range(len(languages)):
+                    is_low_entropy_attn = torch.tensor([idx.item() in low_entropy_set_attn for idx in sorted_indices_attn[i]], dtype=torch.bool)
+                    
+                    filtered_indices_attn = sorted_indices_attn[i][is_low_entropy_attn]
+                    filtered_scores_attn = sorted_scores_attn[i][is_low_entropy_attn]
+                    
+                    filtered_indices_list_attn.append(filtered_indices_attn)
+                    filtered_scores_list_attn.append(filtered_scores_attn)
+                
+                attn_results[key] = {
+                    'filtered_indices': {lang: idx.cpu() for lang, idx in zip(languages, filtered_indices_list_attn)},
+                    'filtered_scores': {lang: score.cpu() for lang, score in zip(languages, filtered_scores_list_attn)},
+                    'all_scores': act_diff_scores_attn.cpu(),
+                    'low_entropy_indices': low_entropy_indices_attn.cpu(),
+                }
+
+        if attn_results:
+            save_path_attn = os.path.join(output_dir, f"layer_{layer}_top_neurons_attn.pth")
+            attn_results['languages'] = languages
+            torch.save(attn_results, save_path_attn)
+
+    print(f"Analysis complete. Results saved in {output_dir}")
+
     print(f"Analysis complete. Results saved in {output_dir}")
 
 def main():
@@ -87,6 +138,7 @@ def main():
     parser.add_argument("--model_name", type=str, default="google/gemma-2-2b", help="Model name for finding the correct subdirectory.")
     parser.add_argument("--input_dir", type=str, default="./neuron_avg_activations", help="Directory where average activation files are stored.")
     parser.add_argument("--output_dir", type=str, default="./neuron_analysis_results", help="Directory to save the final analysis results.")
+    parser.add_argument("--entropy_quantile", type=float, default=0.25, help="Quantile for low-entropy filtering.")
 
     args = parser.parse_args()
     analyze_and_save_neuron_indices(args)

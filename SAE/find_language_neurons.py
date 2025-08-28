@@ -7,6 +7,7 @@ import os
 
 torch.set_grad_enabled(False)
 
+
 def compute_and_save_avg_activations(args):
     """
     모델의 모든 레이어를 순회하며 언어별 평균 뉴런 활성화 값을 계산하고 저장합니다.
@@ -37,13 +38,14 @@ def compute_and_save_avg_activations(args):
         attn_hook_point_v = f"blocks.{layer}.attn.hook_v"
         
         d_mlp = model.cfg.d_mlp
-        n_heads = model.cfg.n_heads
+        n_q_heads = model.cfg.n_heads
+        n_kv_heads = model.cfg.n_key_value_heads
         d_head = model.cfg.d_head
 
         total_activations_mlp = torch.zeros((d_mlp, len(languages)), device=device)
-        total_activations_q = torch.zeros((n_heads, d_head, len(languages)), device=device)
-        total_activations_k = torch.zeros((n_heads, d_head, len(languages)), device=device)
-        total_activations_v = torch.zeros((n_heads, d_head, len(languages)), device=device)
+        total_activations_q = torch.zeros((n_q_heads, d_head, len(languages)), device=device)
+        total_activations_k = torch.zeros((n_kv_heads, d_head, len(languages)), device=device)
+        total_activations_v = torch.zeros((n_kv_heads, d_head, len(languages)), device=device)
         token_counts = torch.zeros(len(languages), device=device)
 
         for _, row in tqdm(dataset.iterrows(), total=len(dataset), desc=f"Layer {layer} Data", leave=False):
@@ -86,6 +88,7 @@ def compute_and_save_avg_activations(args):
         }
         torch.save(data_to_save, save_path)
         print(f"Saved average activations for layer {layer} to {save_path}")
+
 
 def main():
     parser = argparse.ArgumentParser(description="Compute and save per-language average neuron activations.")

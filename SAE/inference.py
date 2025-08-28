@@ -24,7 +24,7 @@ class Chat_Model():
     def __init__(self, path):
         self.model = AutoModelForCausalLM.from_pretrained(path, device_map='auto', torch_dtype="auto",)
         self.tokenizer = AutoTokenizer.from_pretrained(path)
-        if  'Meta' in path:
+        if  'meta' in path:
             self.model.generation_config.pad_token_id = self.tokenizer.eos_token_id
         self.hooks = []
 
@@ -479,10 +479,12 @@ def plot_top_feature_activations(results, layer, args, top_k, languages):
     print(f"Plot saved to {save_path}")
 
 
+
 def plot_neuron_count_across_layers(args):
     """
     전체 레이어에 걸친 뉴런 점수 중 상위 1%를 특정성 기준으로 삼아,
-    각 레이어에 해당 기준을 넘는 뉴런이 몇 개인지 분포를 시각화합니다.
+    각 레이어에 해당 기준을 넘는 뉴런이 몇 개인지 분포를 시각화하고,
+    상위 1% 뉴런의 인덱스를 저장합니다.
     """
     print("--- Starting Language-Specific Neuron Count Plotting Across Layers ---")
 
@@ -490,95 +492,240 @@ def plot_neuron_count_across_layers(args):
     
     results_dir = getattr(args, 'analysis_results_dir', './neuron_analysis_results')
     plot_dir = getattr(args, 'plot_output_dir', './plot/neuron_layer_distribution')
+    top_neurons_dir = os.path.join(results_dir, "top_1_percent_neurons")
 
     model_results_path = os.path.join(results_dir, model_name_safe)
     plot_save_dir = os.path.join(plot_dir)
+    top_neurons_save_dir = os.path.join(top_neurons_dir, model_name_safe)
+
     os.makedirs(plot_save_dir, exist_ok=True)
+    os.makedirs(top_neurons_save_dir, exist_ok=True)
 
     print(f"Loading results from: {model_results_path}")
     print(f"Plots will be saved to: {plot_save_dir}")
+    print(f"Top 1% neuron indices will be saved to: {top_neurons_save_dir}")
 
-    analysis_files = sorted(glob.glob(os.path.join(model_results_path, "layer_*_top_neurons_combined.pth")))
+    def process_module(file_pattern, module_name, keys_to_process=None):
+        analysis_files = sorted(glob.glob(os.path.join(model_results_path, file_pattern)))
+        if not analysis_files:
+            print(f"No analysis files found for module {module_name} with pattern {file_pattern}. Skipping.")
+            return
 
-    if not analysis_files:
-        print(f"Error: No analysis files found in {model_results_path}. Please run neuron_analysis.py first.")
-        return
+        first_file_data = torch.load(analysis_files[0])
+        languages = first_file_data['languages']
+        num_layers = len(analysis_files)
 
-    # 1단계: 모든 레이어의 점수를 수집하여 언어별 임계값(threshold) 계산
-    first_file_data = torch.load(analysis_files[0])
-    languages = first_file_data['languages']
-    num_layers = len(analysis_files)
-    all_scores_per_lang = [[] for _ in languages]
-
-    print("Pass 1: Gathering all scores to determine global thresholds...")
-    for file_path in tqdm(analysis_files, desc="Gathering Scores"):
-        data = torch.load(file_path)
-        scores = data['scores'] # Shape: [num_languages, d_mlp]
-        for i in range(len(languages)):
-            all_scores_per_lang[i].append(scores[i])
-
-    thresholds = []
-    for i, lang in enumerate(languages):
-        lang_scores_tensor = torch.cat(all_scores_per_lang[i])
-        # 상위 1%에 해당하는 분위수 계산 (0.99 분위수)
-        threshold = torch.quantile(lang_scores_tensor, 0.99)
-        thresholds.append(threshold)
-        print(f"Global top 1% threshold for {lang.upper()}: {threshold.item():.4f}")
-
-    # 2단계: 각 레이어에서 임계값을 넘는 뉴런 수 계산
-    neuron_counts = torch.zeros(len(languages), num_layers)
-    print("Pass 2: Counting neurons above threshold in each layer...")
-    for layer_idx, file_path in enumerate(tqdm(analysis_files, desc="Counting Neurons")):
-        data = torch.load(file_path)
-        scores = data['scores']
-        for lang_idx in range(len(languages)):
-            count = (scores[lang_idx] > thresholds[lang_idx]).sum().item()
-            neuron_counts[lang_idx, layer_idx] = count
-
-    # 3단계: 시각화
-    plt.figure(figsize=(15, 8))
-    layers = range(num_layers)
-    
-    for i, lang in enumerate(languages):
-        plt.plot(layers, neuron_counts[i].numpy(), marker='o', linestyle='-', label=lang.upper())
-
-    plt.title(f"Distribution of Top 1% Language-Specific Neurons Across Layers for {args.model}", fontsize=16)
-    plt.xlabel("Layer", fontsize=12)
-    plt.ylabel(f"Count of Language-Specific Neurons", fontsize=12)
-    plt.xticks(layers)
-    plt.legend(title="Language")
-    plt.grid(True, which='both', linestyle='--', linewidth=0.5)
-    plt.tight_layout()
-
-    save_path = os.path.join(plot_save_dir, f"{model_name_safe}_neuron_distribution_across_layers_all_lan.png")
-    plt.savefig(save_path)
-    plt.close()
-
-    print(f"--- Plotting complete. Plot saved to {save_path} ---")
-
-
-    # 4단계: 개별 언어 플롯 시각화                                                                                                                                                                                                                                        
-    for i, lang in enumerate(languages):                                                                                                                                                                                                                                  
+        if keys_to_process is None:
+            keys_to_process = {module_name: None}
+        
         plt.figure(figsize=(15, 8))
-        plt.plot(layers, neuron_counts[i].numpy(), marker='o', linestyle='-', label=lang.upper(), color=f'C{i}')
-        plt.title(f"Distribution of Top 1% {lang.upper()}-Specific Neurons Across Layers for {args.model}", fontsize=16)
+        layers = range(num_layers)
+
+        all_neuron_counts = {}
+
+        for key_name, data_key in keys_to_process.items():
+            all_scores_per_lang = [[] for _ in languages]
+            
+            print(f"Processing {key_name}...")
+            print("Pass 1: Gathering all scores to determine global thresholds...")
+            for file_path in tqdm(analysis_files, desc=f"Gathering Scores for {key_name}"):
+                data = torch.load(file_path)
+                scores = data[data_key]['all_scores'] if data_key and data_key in data else data['all_scores']
+                for i in range(len(languages)):
+                    all_scores_per_lang[i].append(scores[i])
+
+            thresholds = []
+            for i, lang in enumerate(languages):
+                if not all_scores_per_lang[i]: continue
+                lang_scores_tensor = torch.cat(all_scores_per_lang[i])
+                if lang_scores_tensor.numel() == 0: continue
+                threshold = torch.quantile(lang_scores_tensor, 0.99)
+                thresholds.append(threshold)
+
+            if not thresholds:
+                print(f"No scores found for {key_name}, skipping analysis.")
+                continue
+
+            neuron_counts = torch.zeros(len(languages), num_layers)
+            top_neurons_per_layer = []
+
+            print("Pass 2: Counting neurons and saving top 1% indices...")
+            for layer_idx, file_path in enumerate(tqdm(analysis_files, desc=f"Analyzing {key_name}")):
+                data = torch.load(file_path)
+                scores = data[data_key]['all_scores'] if data_key and data_key in data else data['all_scores']
+                low_entropy_indices = data[data_key]['low_entropy_indices'] if data_key and data_key in data else data['low_entropy_indices']
+                low_entropy_set = set(low_entropy_indices.tolist())
+                
+                top_neurons_this_layer = {}
+                for lang_idx, lang in enumerate(languages):
+                    if lang_idx >= len(thresholds): continue
+                    
+                    # 1. 점수 임계값을 넘는 뉴런 찾기
+                    above_threshold_mask = scores[lang_idx] > thresholds[lang_idx]
+                    
+                    # 2. 엔트로피가 낮은 뉴런 집합과 교차점 찾기
+                    above_threshold_indices = torch.where(above_threshold_mask)[0].tolist()
+                    
+                    final_indices = [idx for idx in above_threshold_indices if idx in low_entropy_set]
+                    
+                    neuron_counts[lang_idx, layer_idx] = len(final_indices)
+                    top_neurons_this_layer[lang] = torch.tensor(final_indices, dtype=torch.long).cpu()
+                top_neurons_per_layer.append(top_neurons_this_layer)
+
+            all_neuron_counts[key_name] = neuron_counts
+
+            # Save top neurons
+            save_path_top_neurons = os.path.join(top_neurons_save_dir, f"top_1_percent_neurons_{key_name}.pth")
+            torch.save(top_neurons_per_layer, save_path_top_neurons)
+            print(f"Top 1% neuron indices for {key_name} saved to {save_path_top_neurons}")
+
+            # Plotting
+            for i, lang in enumerate(languages):
+                if i < neuron_counts.shape[0]:
+                    plt.plot(layers, neuron_counts[i].numpy(), marker='o', linestyle='-', label=f"{lang.upper()} ({key_name})")
+
+        plt.title(f"Distribution of Top 1% Language-Specific Neurons in {module_name} Across Layers for {args.model_path}", fontsize=16)
         plt.xlabel("Layer", fontsize=12)
         plt.ylabel("Count of Language-Specific Neurons", fontsize=12)
-        plt.xticks(layers, rotation=45)
-        plt.legend()
+        plt.xticks(layers)
+        plt.legend(title="Language & Component")
         plt.grid(True, which='both', linestyle='--', linewidth=0.5)
         plt.tight_layout()
-        lang_save_dir = os.path.join(plot_save_dir, lang)
-        os.makedirs(lang_save_dir, exist_ok=True)
-                                                                                                                                                                                                                                                                        
-        save_path_individual = os.path.join(lang_save_dir, f"{model_name_safe}_neuron_dist_layer_{lang}.png")
-        plt.savefig(save_path_individual)
+
+        save_path_plot = os.path.join(plot_save_dir, f"{model_name_safe}_{module_name}_neuron_distribution.png")
+        plt.savefig(save_path_plot)
         plt.close()
-        print(f"Individual plot for {lang.upper()} saved to {save_path_individual}")
-                                                                                                                                                                                                                                                                                    
-    print(f"--- Plotting complete. ---")      
+        print(f"Plot for {module_name} saved to {save_path_plot}")
+
+        # Individual language plots
+        for lang_idx, lang in enumerate(languages):
+            plt.figure(figsize=(15, 8))
+            for key_name, counts in all_neuron_counts.items():
+                if lang_idx < counts.shape[0]:
+                    plt.plot(layers, counts[lang_idx].numpy(), marker='o', linestyle='-', label=f"{key_name}")
+
+            plt.title(f"Distribution of Top 1% {lang.upper()}-Specific Neurons Across Layers for {args.model_path}", fontsize=16)
+            plt.xlabel("Layer", fontsize=12)
+            plt.ylabel("Count of Language-Specific Neurons", fontsize=12)
+            plt.xticks(layers)
+            plt.legend(title="Component")
+            plt.grid(True, which='both', linestyle='--', linewidth=0.5)
+            plt.tight_layout()
+
+            lang_save_dir = os.path.join(plot_save_dir, lang)
+            os.makedirs(lang_save_dir, exist_ok=True)
+
+            save_path_individual = os.path.join(lang_save_dir, f"{model_name_safe}_{module_name}_neuron_distribution_{lang}.png")
+            plt.savefig(save_path_individual)
+            plt.close()
+            print(f"Individual plot for {lang.upper()} ({module_name}) saved to {save_path_individual}")
+
+    # Process MLP module
+    process_module("layer_*_top_neurons_mlp.pth", "MLP")
+
+    # Process Attention module
+    process_module("layer_*_top_neurons_attn.pth", "Attention", 
+                   keys_to_process={'Q': 'avg_activations_q', 'K': 'avg_activations_k', 'V': 'avg_activations_v'})
+
+    print(f"--- Plotting complete. ---")
+
+    
+
+      
 
 
+
+def plot_lan_feature_distribution(args):
+    """
+    Plots the distribution of globally top 1% language-specific features
+    (filtered by magnitude and entropy) across all layers for each language.
+    """
+    print("--- Starting Global Language-Specific Feature Distribution Plotting ---")
+
+    lan_list = ['en', 'es', 'fr', 'ja', 'ko', 'pt', 'th', 'vi', 'zh', 'ar']
+    
+    layer_dirs = sorted(glob.glob(f'./sae_acts/{args.model}/layer_*'))
+    num_layers = len(layer_dirs)
+
+    if num_layers == 0:
+        print(f"Error: No layer data found for model '{args.model}'. Please run latent_analysis.py first.")
+        return
+
+    # --- First Pass: Collect all scores to find global thresholds ---
+    all_scores_per_lan = {lan: [] for lan in lan_list}
+    print("Pass 1: Gathering all feature scores...")
+    for layer in tqdm(range(num_layers), desc="Gathering Scores"):
+        file_path = f'./sae_acts/{args.model}/layer_{layer}/top_index_per_lan_magnitude_entropy.pth'
+        
+        if not os.path.exists(file_path):
+            continue
+        
+        lan_feature_dict = torch.load(file_path)
+        for lan in lan_list:
+            if lan in lan_feature_dict:
+                _indices, scores = lan_feature_dict[lan]
+                if scores.numel() > 0:
+                    all_scores_per_lan[lan].append(scores)
+
+    # --- Calculate Global Thresholds ---
+    global_thresholds = {}
+    for lan in lan_list:
+        if all_scores_per_lan[lan]:
+            all_scores_tensor = torch.cat(all_scores_per_lan[lan])
+            if all_scores_tensor.numel() > 0:
+                global_thresholds[lan] = torch.quantile(all_scores_tensor, 0.95)
+            else:
+                global_thresholds[lan] = float('inf') # No features, so threshold is infinity
+        else:
+            global_thresholds[lan] = float('inf')
+
+    # --- Second Pass: Count features in each layer above the global threshold ---
+    feature_counts_per_lan = {lan: [] for lan in lan_list}
+    print("\nPass 2: Counting features above global threshold...")
+    for layer in tqdm(range(num_layers), desc="Counting Features"):
+        file_path = f'./sae_acts/{args.model}/layer_{layer}/top_index_per_lan_magnitude_entropy.pth'
+        
+        if not os.path.exists(file_path):
+            for lan in lan_list:
+                feature_counts_per_lan[lan].append(0)
+            continue
+            
+        lan_feature_dict = torch.load(file_path)
+        for lan in lan_list:
+            if lan in lan_feature_dict and lan in global_thresholds:
+                _indices, scores = lan_feature_dict[lan]
+                threshold = global_thresholds[lan]
+                count = (scores >= threshold).sum().item()
+                feature_counts_per_lan[lan].append(count)
+            else:
+                feature_counts_per_lan[lan].append(0)
+
+    # --- Plotting ---
+    save_dir_base = f'./plot/lan-specific_neuron_distribution/{args.model}/'
+    os.makedirs(save_dir_base, exist_ok=True)
+    
+    layers_x_axis = range(num_layers)
+    
+    print("\nGenerating plots...")
+    for lan in lan_list:
+        plt.figure(figsize=(14, 8))
+        
+        counts = feature_counts_per_lan[lan]
+        
+        total_features = sum(counts)
+        plt.plot(layers_x_axis, counts, marker='o', linestyle='-')
+        
+        plt.title(f'Distribution of Globally Top 5% Specific Features for "{lan.upper()}" (Total: {total_features})', fontsize=16)
+        plt.xlabel('Layer', fontsize=12)
+        plt.ylabel('Number of Top 1% Features', fontsize=12)
+        plt.xticks(layers_x_axis)
+        plt.grid(True, which='both', linestyle='--', alpha=0.7)
+        plt.tight_layout()
+        
+        save_path = os.path.join(save_dir_base, f'global_feature_distribution_{lan}.png')
+        plt.savefig(save_path)
+        plt.close()
+        print(f"Plot for {lan.upper()} saved to {save_path}")
 
 if __name__ == "__main__":
     args = load_args()
@@ -590,6 +737,9 @@ if __name__ == "__main__":
     if mode == 'plot_neuron_count':
         # 뉴런의 레이어별 분포 플로팅
         plot_neuron_count_across_layers(args)
+    elif mode == 'plot_lan_feature_distribution':
+        # Plot distribution of high-magnitude, low-entropy features
+        plot_lan_feature_distribution(args)
     elif mode == 'plot_neuron_distribution':
         # 뉴런 특정성 점수 분포 플로팅 (이전 함수)
         # plot_neuron_specificity_distribution(args) # 이 함수는 이제 plot_neuron_count_across_layers로 대체되었습니다.
@@ -601,4 +751,4 @@ if __name__ == "__main__":
     else:
         # 기본으로 실행되던 함수 또는 에러 메시지
         print(f"Unknown or default mode: {mode}. Please specify a mode.")
-        print("Available modes: plot_neuron_count, code_switch, topk_feature")
+        print("Available modes: plot_neuron_count, plot_lan_feature_distribution, code_switch, topk_feature")
