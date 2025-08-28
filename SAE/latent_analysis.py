@@ -70,11 +70,27 @@ def generate_top_feature_indices(args, entropy_quantile=0.25):
             avg_act_per_lan.append(avg_act)
         avg_act_per_lan = torch.stack(avg_act_per_lan)
 
+        all_scores_list = []
+        for i in range(num_lan):
+            score = avg_act_per_lan[i] - torch.cat([avg_act_per_lan[:i], avg_act_per_lan[i+1:]], dim=0).mean(dim=0)
+            all_scores_list.append(score)
+        all_scores = torch.stack(all_scores_list)
+
+        # Save the new comprehensive analysis file
+        feature_analysis_data = {
+            'all_scores': all_scores.cpu(),
+            'low_entropy_indices': low_entropy_feature_indices.cpu(),
+            'languages': list(lan_list)
+        }
+        torch.save(feature_analysis_data, os.path.join(file_dir, 'sae_feature_analysis.pth'))
+        print(f"Saved full feature analysis data for layer {layer}.")
+
         top_indices_magnitude_only = []
         top_indices_mag_and_entropy = {}
 
         for i, lan_name in enumerate(lan_list):
-            avg_act_difference_per_lan = avg_act_per_lan[i] - torch.cat([avg_act_per_lan[:i], avg_act_per_lan[i+1:]], dim=0).mean(dim=0)
+            # Use the already computed scores
+            avg_act_difference_per_lan = all_scores[i]
             sorted_values_magnitude, sorted_indices_magnitude = torch.sort(avg_act_difference_per_lan, descending=True)
             
             top_indices_magnitude_only.append(sorted_indices_magnitude.unsqueeze(0))
