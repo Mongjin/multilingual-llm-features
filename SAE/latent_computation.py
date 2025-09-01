@@ -2,7 +2,6 @@ import torch
 import numpy as np
 from transformers import AutoModelForCausalLM,  AutoTokenizer
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 import json
 import pandas as pd
 from tqdm import tqdm
