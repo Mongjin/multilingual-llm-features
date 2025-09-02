@@ -47,11 +47,11 @@ def compute_and_save_avg_activations(args):
         n_kv_heads = model.cfg.n_key_value_heads
         d_head = model.cfg.d_head
 
-        total_activations_mlp = torch.zeros((d_mlp, len(languages)), device=model.device)
-        total_activations_q = torch.zeros((n_q_heads, d_head, len(languages)), device=model.device)
-        total_activations_k = torch.zeros((n_kv_heads, d_head, len(languages)), device=model.device)
-        total_activations_v = torch.zeros((n_kv_heads, d_head, len(languages)), device=model.device)
-        token_counts = torch.zeros(len(languages), device=model.device)
+        total_activations_mlp = torch.zeros((d_mlp, len(languages)), device=model.embed.W_E.device)
+        total_activations_q = torch.zeros((n_q_heads, d_head, len(languages)), device=model.embed.W_E.device)
+        total_activations_k = torch.zeros((n_kv_heads, d_head, len(languages)), device=model.embed.W_E.device)
+        total_activations_v = torch.zeros((n_kv_heads, d_head, len(languages)), device=model.embed.W_E.device)
+        token_counts = torch.zeros(len(languages), device=model.embed.W_E.device)
 
         for _, row in tqdm(dataset.iterrows(), total=len(dataset), desc=f"Layer {layer} Data", leave=False):
             prompt, lang = row['text'], row['lan']
