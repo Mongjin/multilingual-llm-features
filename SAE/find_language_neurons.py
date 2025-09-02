@@ -255,8 +255,8 @@ def main():
 
     try:
         # Try to load with HookedTransformer to check for support
-        from transformer_lens import HookedTransformer
-        print(HookedTransformer.list_pretrained_model_names())
+        import transformer_lens
+        print(transformer_lens.HookedTransformer.list_pretrained_model_names())
         exit(0)
         print("Model is supported by HookedTransformer. Using HookedTransformerActivationFinder.")
         finder = HookedTransformerActivationFinder(args.model_name, args.dataset_path, args.output_dir)
