@@ -13,12 +13,17 @@ def compute_and_save_avg_activations(args):
     모델의 모든 레이어를 순회하며 언어별 평균 뉴런 활성화 값을 계산하고 저장합니다.
     """
     print(f"Loading model: {args.model_name}")
+    
+    n_devices = torch.cuda.device_count() if torch.cuda.is_available() else 1
     device = "cuda" if torch.cuda.is_available() else "cpu"
+
     model = HookedTransformer.from_pretrained(
         args.model_name,
+        n_devices=n_devices,
         device=device,
         fold_ln=True, center_unembed=True, center_writing_weights=True
     )
+    print(f"Model loaded on {model.cfg.n_devices} devices.")
     model.eval()
 
     print(f"Loading dataset from: {args.dataset_path}")
@@ -42,11 +47,11 @@ def compute_and_save_avg_activations(args):
         n_kv_heads = model.cfg.n_key_value_heads
         d_head = model.cfg.d_head
 
-        total_activations_mlp = torch.zeros((d_mlp, len(languages)), device=device)
-        total_activations_q = torch.zeros((n_q_heads, d_head, len(languages)), device=device)
-        total_activations_k = torch.zeros((n_kv_heads, d_head, len(languages)), device=device)
-        total_activations_v = torch.zeros((n_kv_heads, d_head, len(languages)), device=device)
-        token_counts = torch.zeros(len(languages), device=device)
+        total_activations_mlp = torch.zeros((d_mlp, len(languages)), device=model.device)
+        total_activations_q = torch.zeros((n_q_heads, d_head, len(languages)), device=model.device)
+        total_activations_k = torch.zeros((n_kv_heads, d_head, len(languages)), device=model.device)
+        total_activations_v = torch.zeros((n_kv_heads, d_head, len(languages)), device=model.device)
+        token_counts = torch.zeros(len(languages), device=model.device)
 
         for _, row in tqdm(dataset.iterrows(), total=len(dataset), desc=f"Layer {layer} Data", leave=False):
             prompt, lang = row['text'], row['lan']
