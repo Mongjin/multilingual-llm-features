@@ -491,7 +491,7 @@ def plot_neuron_count_across_layers(args):
     model_name_safe = args.model_path.replace("/", "_")
     
     results_dir = getattr(args, 'analysis_results_dir', './neuron_analysis_results_math')
-    plot_dir = getattr(args, 'plot_output_dir', './plot/neuron_layer_distribution')
+    plot_dir = getattr(args, 'plot_output_dir', './plot/neuron_layer_distribution_math')
     top_neurons_dir = os.path.join(results_dir, "top_1_percent_neurons")
 
     model_results_path = os.path.join(results_dir, model_name_safe)
@@ -869,7 +869,7 @@ def plot_multilingual_neuron_distribution(args):
 
     model_name_safe = args.model_path.replace("/", "_")
     results_dir = getattr(args, 'analysis_results_dir', './neuron_analysis_results_math')
-    plot_dir = getattr(args, 'plot_output_dir', './plot/neuron_layer_distribution')
+    plot_dir = getattr(args, 'plot_output_dir', './plot/neuron_layer_distribution_math')
 
     model_results_path = os.path.join(results_dir, model_name_safe)
     plot_save_dir = os.path.join(plot_dir)
