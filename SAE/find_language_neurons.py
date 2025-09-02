@@ -256,9 +256,11 @@ def main():
     try:
         # Try to load with HookedTransformer to check for support
         import transformer_lens
-        print(transformer_lens.loading_from_pretrained.OFFICIAL_MODEL_NAMES)
-        exit(0)
-        print("Model is supported by HookedTransformer. Using HookedTransformerActivationFinder.")
+        available_models = transformer_lens.loading_from_pretrained.OFFICIAL_MODEL_NAMES
+        if args.model_name in available_models:
+            print("Model is supported by HookedTransformer. Using HookedTransformerActivationFinder.")
+        else:
+            raise ValueError(f"Model {args.model_name} not supported by HookedTransformer.")
         finder = HookedTransformerActivationFinder(args.model_name, args.dataset_path, args.output_dir)
     except Exception as e:
         print(f"Model not supported by HookedTransformer (error: {e}). Falling back to PytorchHookActivationFinder.")
