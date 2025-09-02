@@ -250,7 +250,7 @@ def main():
     parser = argparse.ArgumentParser(description="Compute and save per-language average neuron activations.")
     parser.add_argument("--model_name", type=str, default="google/gemma-2-2b", help="Model to analyze.")
     parser.add_argument("--dataset_path", type=str, default="./data/multilingual_data.jsonl", help="Path to the multilingual dataset.")
-    parser.add_argument("--output_dir", type=str, default="./neuron_avg_activations", help="Directory to save the average activation results.")
+    parser.add_argument("--output_dir", type=str, default="./neuron_avg_activations_math", help="Directory to save the average activation results.")
     args = parser.parse_args()
 
     try:

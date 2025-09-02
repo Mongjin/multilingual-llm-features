@@ -199,8 +199,8 @@ def main():
     parser = argparse.ArgumentParser(description="Analyze pre-computed activations to find language-specific or multilingual neurons.")
     
     parser.add_argument("--model_name", type=str, default="google/gemma-2-2b", help="Model name for finding the correct subdirectory.")
-    parser.add_argument("--input_dir", type=str, default="./neuron_avg_activations", help="Directory where average activation files are stored.")
-    parser.add_argument("--output_dir", type=str, default="./neuron_analysis_results", help="Directory to save the final analysis results.")
+    parser.add_argument("--input_dir", type=str, default="./neuron_avg_activations_math", help="Directory where average activation files are stored.")
+    parser.add_argument("--output_dir", type=str, default="./neuron_analysis_results_math", help="Directory to save the final analysis results.")
     parser.add_argument("--entropy_quantile", type=float, default=0.25, help="Quantile for low-entropy filtering for language-specific neurons.")
     parser.add_argument("--analysis_type", type=str, default="specific", choices=["specific", "multilingual"], help="Type of analysis to perform.")
 
