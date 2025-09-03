@@ -37,8 +37,10 @@ def generate_top_feature_indices(args, entropy_quantile=0.25):
         except FileNotFoundError:
             print(f"SAE activations file not found for layer {layer}. Skipping.")
             continue
-
-        all_sae_acts_per_token = torch.cat([acts[0, 1:, :] for acts in all_sae_acts if acts.shape[1] > 1])
+        
+        # shape of each element in all_sae_acts: (seq_len, feature_dim)
+        # Concatenate all token activations across all samples, excluding the initial token
+        all_sae_acts_per_token = torch.cat([acts[1:, :] for acts in all_sae_acts if acts.shape[0] > 1])
 
         num_features = all_sae_acts_per_token.shape[-1]
         feature_entropies = torch.zeros(num_features)
@@ -55,7 +57,7 @@ def generate_top_feature_indices(args, entropy_quantile=0.25):
         num_lan = len(lan_list)
 
         avg_act_per_lan = []
-        all_sae_acts_per_token_list = [acts[0, 1:, :] for acts in all_sae_acts if acts.shape[1] > 1]
+        all_sae_acts_per_token_list = [[acts[1:, :] for acts in all_sae_acts if acts.shape[0] > 1]]
         
         lan_indices_map = {lan_name: [] for lan_name in lan_list}
         for i, lan_name in enumerate(multilingual_data['lan']):
