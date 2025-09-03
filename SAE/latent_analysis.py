@@ -50,7 +50,7 @@ def generate_top_feature_indices(args, entropy_quantile=0.25):
         low_entropy_feature_indices = (feature_entropies <= low_entropy_threshold).nonzero(as_tuple=True)[0]
         low_entropy_set = set(low_entropy_feature_indices.tolist())
 
-        multilingual_data = pd.read_json('./data/multilingual_data.jsonl', lines=True)
+        multilingual_data = pd.read_json(args.feature_data_path, lines=True)
         lan_list = multilingual_data['lan'].unique()
         num_lan = len(lan_list)
 

@@ -27,7 +27,7 @@ def hf_model_gen(args):
     model = AutoModelForCausalLM.from_pretrained(args.model_path, device_map='auto',torch_dtype="auto",)
     tokenizer = AutoTokenizer.from_pretrained(args.model_path)
 
-    multilingual_data = pd.read_json('./data/multilingual_data.jsonl', lines=True)
+    multilingual_data = pd.read_json(args.feature_data_path, lines=True)
     # multilingual_data = pd.read_json('./data/metamath_thinking.jsonl', lines=True)
 
     for layer in tqdm(range(model.config.num_hidden_layers)):

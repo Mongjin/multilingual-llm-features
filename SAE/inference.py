@@ -701,7 +701,7 @@ def plot_lan_feature_distribution(args):
                 feature_counts_per_lan[lan].append(0)
 
     # --- Plotting ---
-    save_dir_base = f'./plot/lan-specific_neuron_distribution/{args.model}/'
+    save_dir_base = f'{args.plot_output_dir}/{args.model}/'
     os.makedirs(save_dir_base, exist_ok=True)
     
     layers_x_axis = range(num_layers)
@@ -739,7 +739,7 @@ def plot_sae_feature_distribution_neuron_logic(args):
     
     # Define directories
     results_dir = f'./sae_acts/{args.model}'
-    plot_dir = './plot/sae_feature_distribution_neuron_logic'
+    plot_dir = args.plot_output_dir
     top_features_dir = os.path.join(results_dir, "top_1_percent_features_neuron_logic")
 
     os.makedirs(plot_dir, exist_ok=True)
@@ -947,7 +947,7 @@ if __name__ == "__main__":
         plot_neuron_count_across_layers(args)
     elif mode == 'plot_multilingual_distribution':
         plot_multilingual_neuron_distribution(args)
-    elif mode == 'plot_lan_feature_distribution':
+    elif mode == 'plot_sae_feature_distribution':
         # Plot distribution of high-magnitude, low-entropy features
         plot_lan_feature_distribution(args)
     elif mode == 'plot_sae_feature_neuron_logic':
