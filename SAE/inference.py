@@ -950,7 +950,7 @@ if __name__ == "__main__":
     elif mode == 'plot_sae_feature_distribution':
         # Plot distribution of high-magnitude, low-entropy features
         plot_lan_feature_distribution(args)
-    elif mode == 'plot_sae_feature_neuron_logic':
+    elif mode == 'plot_sae_feature_distribution_hard':
         # Plot SAE feature distribution using the neuron analysis logic
         plot_sae_feature_distribution_neuron_logic(args)
     elif mode == 'plot_neuron_distribution':
@@ -964,4 +964,4 @@ if __name__ == "__main__":
     else:
         # 기본으로 실행되던 함수 또는 에러 메시지
         print(f"Unknown or default mode: {mode}. Please specify a mode.")
-        print("Available modes: plot_neuron_count, plot_lan_feature_distribution, plot_sae_feature_neuron_logic, code_switch, topk_feature, plot_multilingual_distribution")
+        print("Available modes: plot_neuron_count, plot_lan_feature_distribution, plot_sae_feature_distribution_hard, code_switch, topk_feature, plot_multilingual_distribution")
