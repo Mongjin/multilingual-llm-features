@@ -17,6 +17,8 @@ def load_args():
     parser.add_argument('--topk_feature_num', default=3, type=int,  help='model')
     parser.add_argument('--target_lan', default=1, type=int,  help='model')
 
+    parser.add_argument('--sae_output_dir', default='./sae_acts', type=str,  help='model')
+
     parser.add_argument('--analysis_results_dir', default='./neuron_analysis_results', type=str,  help='model')
     parser.add_argument('--plot_output_dir', default='./plot/neuron_layer_distribution', type=str,  help='model')
 

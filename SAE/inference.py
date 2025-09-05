@@ -31,7 +31,7 @@ class Chat_Model():
     
     # Ablate corresponding language features 
     def add_hook_to_change_activation_ablation(self, target_layer, start_idx=0, topk_feature_num=5, ori_lan=4):
-        file_dir = f'./sae_acts/{args.model}/layer_{target_layer}/'
+        file_dir = f'{args.sae_output_dir}/{args.model}/layer_{target_layer}/'
         top_index_per_lan = torch.load(os.path.join(file_dir, 'top_index_per_lan_magnitude.pth'), weights_only=True)
         top_index_per_lan = top_index_per_lan[:, start_idx:start_idx+topk_feature_num]
         sae = load_sae(target_layer, args)
@@ -93,7 +93,7 @@ class Chat_Model():
             return
         self.latent_activation = []
         for target_layer in range(self.model.config.num_hidden_layers):
-            file_dir = f'./sae_acts/{args.model}/layer_{target_layer}/'
+            file_dir = f'{args.sae_output_dir}/{args.model}/layer_{target_layer}/'
             top_index_per_lan = torch.load(os.path.join(file_dir, 'top_index_per_lan_magnitude.pth'), weights_only=True)
             top_index_per_lan = top_index_per_lan[:, :topk_feature_num]
             sae = load_sae(target_layer, args)
@@ -346,33 +346,30 @@ def topk_feature_results_cal(args):
     that maximally activate them for each language and layer.
     """
     print("Starting Top-K Feature Analysis for Plotting...")
-    lan_list = ['en', 'es', 'fr', 'ja', 'ko', 'pt', 'th', 'vi', 'zh', 'ar']
-    # lan_list = ['ko', 'en']
     top_k = 10  # How many top features to analyze for each language
 
     try:
-        # multilingual_data = pd.read_json('./data/metamath_thinking.jsonl', lines=True)
-        multilingual_data = pd.read_json('./data/multilingual_data.jsonl', lines=True)
+        multilingual_data = pd.read_json(args.feature_data_path, lines=True)
         tokenizer = AutoTokenizer.from_pretrained(args.model_path)
     except FileNotFoundError:
         print("Error: Prerequisite file not found. Ensure model_path is correct and test data exists.")
         return
-    
-    # try:
-    #     font_path = fm.findfont(fm.FontProperties(family='NanumGothic'))
-    #     plt.rcParams['font.family'] = 'NanumGothic'
-    #     print(f"NanumGothic font found at: {font_path}")
-    # except ValueError:
-    #     print("Warning: 'NanumGothic' font not found. Korean text may not display correctly.")
-    #     print("Please install a Korean font (e.g., run 'sudo apt-get install -y fonts-nanum*')")
-    #     print("and clear matplotlib cache ('rm -rf ~/.cache/matplotlib/*').")
-    # # 마이너스 부호가 깨지는 것을 방지
-    # plt.rcParams['axes.unicode_minus'] = False
-    # # --- 한글 폰트 설정 끝 ---
+    lan_list = multilingual_data['lan'].unique()
+    try:
+        font_path = fm.findfont(fm.FontProperties(family='NanumGothic'))
+        plt.rcParams['font.family'] = 'NanumGothic'
+        print(f"NanumGothic font found at: {font_path}")
+    except ValueError:
+        print("Warning: 'NanumGothic' font not found. Korean text may not display correctly.")
+        print("Please install a Korean font (e.g., run 'sudo apt-get install -y fonts-nanum*')")
+        print("and clear matplotlib cache ('rm -rf ~/.cache/matplotlib/*').")
+    # 마이너스 부호가 깨지는 것을 방지
+    plt.rcParams['axes.unicode_minus'] = False
+    # --- 한글 폰트 설정 끝 ---
 
     for layer in tqdm(range(args.layer_num), desc="Processing Layers"):
         layer_results = []
-        file_dir = f'./sae_acts/{args.model}/layer_{layer}/'
+        file_dir = f'{args.sae_output_dir}/{args.model}/layer_{layer}/'
 
         try:
             all_sae_acts = torch.load(os.path.join(file_dir, 'sae_acts.pth'))
@@ -402,7 +399,10 @@ def topk_feature_results_cal(args):
                         continue
 
                     # BOS 토큰(인덱스 0)을 제외하고(1:) 최대 활성화 값을 찾음
-                    activations_for_feature = sae_acts_for_sentence[0, 1:, feature_idx]
+                    if 'Llama' not in args.model:
+                        activations_for_feature = sae_acts_for_sentence[0, 1:, feature_idx]
+                    else:
+                        activations_for_feature = sae_acts_for_sentence[1:, feature_idx]
 
                     # 문장에 BOS 토큰 외 다른 토큰이 있는지 확인
                     if activations_for_feature.numel() > 0:
@@ -460,7 +460,7 @@ def plot_top_feature_activations(results, layer, args, top_k, languages):
             if pd.notna(token):
                 height = bar.get_height()
                 ax.text(bar.get_x() + bar.get_width() / 2., height, f' {token}',
-                        ha='center', va='bottom', rotation=90, fontsize=10, color='black')
+                        ha='center', va='bottom', fontsize=10, color='black')
 
     ax.set_ylabel('Max Activation Value', fontsize=14)
     ax.set_title(f'Model: {args.model} | Layer: {layer} | Top {top_k} Activating Tokens per Language Feature', fontsize=16)
@@ -471,7 +471,7 @@ def plot_top_feature_activations(results, layer, args, top_k, languages):
 
     plt.tight_layout()
 
-    save_dir = f'./plot/top_feature_analysis/{args.model}/'
+    save_dir = f'{args.plot_output_dir}/{args.model}/'
     os.makedirs(save_dir, exist_ok=True)
     save_path = os.path.join(save_dir, f'layer_{layer}_top_features_plot.png')
     plt.savefig(save_path)
@@ -644,7 +644,7 @@ def plot_lan_feature_distribution(args):
 
     lan_list = ['en', 'es', 'fr', 'ja', 'ko', 'pt', 'th', 'vi', 'zh', 'ar']
     
-    layer_dirs = sorted(glob.glob(f'./sae_acts/{args.model}/layer_*'))
+    layer_dirs = sorted(glob.glob(f'{args.sae_output_dir}/{args.model}/layer_*'))
     num_layers = len(layer_dirs)
 
     if num_layers == 0:
@@ -655,7 +655,7 @@ def plot_lan_feature_distribution(args):
     all_scores_per_lan = {lan: [] for lan in lan_list}
     print("Pass 1: Gathering all feature scores...")
     for layer in tqdm(range(num_layers), desc="Gathering Scores"):
-        file_path = f'./sae_acts/{args.model}/layer_{layer}/top_index_per_lan_magnitude_entropy.pth'
+        file_path = f'{args.sae_output_dir}/{args.model}/layer_{layer}/top_index_per_lan_magnitude_entropy.pth'
         
         if not os.path.exists(file_path):
             continue
@@ -683,7 +683,7 @@ def plot_lan_feature_distribution(args):
     feature_counts_per_lan = {lan: [] for lan in lan_list}
     print("\nPass 2: Counting features above global threshold...")
     for layer in tqdm(range(num_layers), desc="Counting Features"):
-        file_path = f'./sae_acts/{args.model}/layer_{layer}/top_index_per_lan_magnitude_entropy.pth'
+        file_path = f'{args.sae_output_dir}/{args.model}/layer_{layer}/top_index_per_lan_magnitude_entropy.pth'
         
         if not os.path.exists(file_path):
             for lan in lan_list:
@@ -738,7 +738,7 @@ def plot_sae_feature_distribution_neuron_logic(args):
     model_name_safe = args.model_path.replace("/", "_")
     
     # Define directories
-    results_dir = f'./sae_acts/{args.model}'
+    results_dir = f'{args.sae_output_dir}/{args.model}'
     plot_dir = args.plot_output_dir
     top_features_dir = os.path.join(results_dir, "top_1_percent_features_neuron_logic")
 

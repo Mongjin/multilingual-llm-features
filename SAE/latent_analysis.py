@@ -29,7 +29,7 @@ def generate_top_feature_indices(args, entropy_quantile=0.25):
     based on both activation magnitude and low entropy.
     """
     for layer in tqdm(range(args.layer_num), desc="Processing Layers"):
-        file_dir = f'./sae_acts/{args.model}/layer_{layer}/'
+        file_dir = f'{args.sae_output_dir}/{args.model}/layer_{layer}/'
         os.makedirs(file_dir, exist_ok=True)
         
         try:
@@ -38,23 +38,6 @@ def generate_top_feature_indices(args, entropy_quantile=0.25):
             print(f"SAE activations file not found for layer {layer}. Skipping.")
             continue
         
-        # shape of each element in all_sae_acts: (seq_len, feature_dim)
-        # Concatenate all token activations across all samples, excluding the initial token
-        if 'Llama' in args.model:
-            all_sae_acts_per_token = torch.cat([acts[1:, :] for acts in all_sae_acts if acts.shape[0] > 1])
-        else:    
-            all_sae_acts_per_token = torch.cat([acts[0, 1:, :] for acts in all_sae_acts if acts.shape[1] > 1])
-
-        num_features = all_sae_acts_per_token.shape[-1]
-        feature_entropies = torch.zeros(num_features)
-        for i in tqdm(range(num_features), desc=f"Calculating Entropy for Layer {layer}", leave=False):
-            feature_activations = all_sae_acts_per_token[:, i]
-            feature_entropies[i] = calculate_entropy(feature_activations)
-        
-        low_entropy_threshold = torch.quantile(feature_entropies, entropy_quantile)
-        low_entropy_feature_indices = (feature_entropies <= low_entropy_threshold).nonzero(as_tuple=True)[0]
-        low_entropy_set = set(low_entropy_feature_indices.tolist())
-
         multilingual_data = pd.read_json(args.feature_data_path, lines=True)
         lan_list = multilingual_data['lan'].unique()
         num_lan = len(lan_list)
@@ -76,6 +59,17 @@ def generate_top_feature_indices(args, entropy_quantile=0.25):
             avg_act = all_sae_acts_per_token_lan.mean(dim=-2)
             avg_act_per_lan.append(avg_act)
         avg_act_per_lan = torch.stack(avg_act_per_lan)
+
+        # Calculate entropy across the language axis for each feature
+        num_features = avg_act_per_lan.shape[1]
+        feature_entropies = torch.zeros(num_features)
+        for i in tqdm(range(num_features), desc=f"Calculating Entropy for Layer {layer}", leave=False):
+            feature_activations_across_langs = avg_act_per_lan[:, i]
+            feature_entropies[i] = calculate_entropy(feature_activations_across_langs)
+        
+        low_entropy_threshold = torch.quantile(feature_entropies, entropy_quantile)
+        low_entropy_feature_indices = (feature_entropies <= low_entropy_threshold).nonzero(as_tuple=True)[0]
+        low_entropy_set = set(low_entropy_feature_indices.tolist())
 
         all_scores_list = []
         for i in range(num_lan):

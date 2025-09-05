@@ -43,7 +43,7 @@ def hf_model_gen(args):
                 sae_acts = sae.encode(target_act.to(torch.float32)).cpu()
             all_sae_acts.append(sae_acts)
         
-        save_dir = f'./sae_acts/{args.model}/layer_{layer}/'
+        save_dir = f'{args.sae_output_dir}/{args.model}/layer_{layer}/'
         os.makedirs(save_dir, exist_ok=True)
         torch.save(all_sae_acts, os.path.join(save_dir, 'sae_acts.pth'))
 
