@@ -12,7 +12,7 @@ class ActivationFinder:
     """
     Base class for finding and saving average neuron activations.
     """
-    def __init__(self, model_name, dataset_path, output_dir):
+    def __init__(self, model_name, dataset_path, output_dir, type):
         self.model_name = model_name
         self.dataset_path = dataset_path
         self.output_dir = output_dir
@@ -20,12 +20,13 @@ class ActivationFinder:
         self.model = None
         self.tokenizer = None
         self.languages = None
+        self.type = type
         self.lang_to_idx = None
 
     def load_dataset(self):
         print(f"Loading dataset from: {self.dataset_path}")
         dataset = pd.read_json(self.dataset_path, lines=True)
-        self.languages = dataset['lan'].unique().tolist()
+        self.languages = dataset[self.type].unique().tolist()
         self.lang_to_idx = {lang: i for i, lang in enumerate(self.languages)}
         print(f"Found languages: {self.languages}")
         return dataset
@@ -37,8 +38,8 @@ class HookedTransformerActivationFinder(ActivationFinder):
     """
     Activation finder using the HookedTransformer library.
     """
-    def __init__(self, model_name, dataset_path, output_dir):
-        super().__init__(model_name, dataset_path, output_dir)
+    def __init__(self, model_name, dataset_path, output_dir, type):
+        super().__init__(model_name, dataset_path, output_dir, type)
         from transformer_lens import HookedTransformer
         print(f"Loading model with HookedTransformer: {self.model_name}")
         n_devices = torch.cuda.device_count() if torch.cuda.is_available() else 1
@@ -76,7 +77,7 @@ class HookedTransformerActivationFinder(ActivationFinder):
             token_counts = torch.zeros(len(self.languages), device=self.model.embed.W_E.device)
 
             for _, row in tqdm(dataset.iterrows(), total=len(dataset), desc=f"Layer {layer} Data", leave=False):
-                prompt, lang = row['text'], row['lan']
+                prompt, lang = row['text'], row[self.type]
                 if not prompt: continue
                 tokens = self.model.to_tokens(prompt, truncate=True)
                 try:
@@ -118,8 +119,8 @@ class PytorchHookActivationFinder(ActivationFinder):
     """
     Activation finder using PyTorch hooks for generic transformer models.
     """
-    def __init__(self, model_name, dataset_path, output_dir):
-        super().__init__(model_name, dataset_path, output_dir)
+    def __init__(self, model_name, dataset_path, output_dir, type):
+        super().__init__(model_name, dataset_path, output_dir, type)
         from transformers import AutoModelForCausalLM, AutoTokenizer
         print(f"Loading model with HuggingFace Transformers: {self.model_name}")
         self.model = AutoModelForCausalLM.from_pretrained(self.model_name, device_map="auto")
@@ -196,7 +197,7 @@ class PytorchHookActivationFinder(ActivationFinder):
             token_counts = torch.zeros(len(self.languages), device=home_device)
 
             for _, row in tqdm(dataset.iterrows(), total=len(dataset), desc=f"Layer {layer} Data", leave=False):
-                prompt, lang = row['text'], row['lan']
+                prompt, lang = row['text'], row[self.type]
                 if not prompt: continue
                 
                 inputs = self.tokenizer(prompt, return_tensors="pt", truncation=True, max_length=512).to(self.device)
@@ -251,6 +252,7 @@ def main():
     parser.add_argument("--model_name", type=str, default="google/gemma-2-2b", help="Model to analyze.")
     parser.add_argument("--dataset_path", type=str, default="./data/multilingual_data.jsonl", help="Path to the multilingual dataset.")
     parser.add_argument("--output_dir", type=str, default="./neuron_avg_activations", help="Directory to save the average activation results.")
+    parser.add_argument("--type", type=str, default='lan', help="Type of analysis: 'lan' for language-based.")
     args = parser.parse_args()
 
     try:
@@ -261,10 +263,10 @@ def main():
             print("Model is supported by HookedTransformer. Using HookedTransformerActivationFinder.")
         else:
             raise ValueError(f"Model {args.model_name} not supported by HookedTransformer.")
-        finder = HookedTransformerActivationFinder(args.model_name, args.dataset_path, args.output_dir)
+        finder = HookedTransformerActivationFinder(args.model_name, args.dataset_path, args.output_dir, args.type)
     except Exception as e:
         print(f"Model not supported by HookedTransformer (error: {e}). Falling back to PytorchHookActivationFinder.")
-        finder = PytorchHookActivationFinder(args.model_name, args.dataset_path, args.output_dir)
+        finder = PytorchHookActivationFinder(args.model_name, args.dataset_path, args.output_dir, args.type)
 
     finder.run()
 
