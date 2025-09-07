@@ -81,6 +81,7 @@ class HookedTransformerActivationFinder(ActivationFinder):
                 if not prompt: continue
                 tokens = self.model.to_tokens(prompt, truncate=True)
                 try:
+                    tokens = tokens.to(self.model.embed.W_E.device)
                     _, cache = self.model.run_with_cache(tokens, names_filter=[mlp_hook_point, attn_hook_point_q, attn_hook_point_k, attn_hook_point_v])
                     
                     mlp_activations = cache[mlp_hook_point][0]
@@ -155,6 +156,11 @@ class PytorchHookActivationFinder(ActivationFinder):
         k_modules = self.find_modules(self.model, k_pattern)
         v_modules = self.find_modules(self.model, v_pattern)
 
+        print(f"Layer {layer_idx} - Found MLP modules: {mlp_modules}")
+        print(f"Layer {layer_idx} - Found Q modules: {q_modules}")
+        print(f"Layer {layer_idx} - Found K modules: {k_modules}")
+        print(f"Layer {layer_idx} - Found V modules: {v_modules}")
+
         # Register the hooks
         if mlp_modules:
             self.hooks.append(self.model.get_submodule(mlp_modules[0]).register_forward_hook(self.get_activation('mlp')))
@@ -205,6 +211,8 @@ class PytorchHookActivationFinder(ActivationFinder):
                 try:
                     self.activations.clear()
                     _ = self.model(**inputs)
+
+                    print(f"Activation keys: {self.activations.keys()}")
 
                     # Move activations to the home device for accumulation
                     mlp_activations = self.activations.get('mlp')[0].to(home_device)
