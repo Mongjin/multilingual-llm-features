@@ -935,6 +935,92 @@ def plot_multilingual_neuron_distribution(args):
     print(f"--- Multilingual plotting complete. ---")
 
 
+def plot_bilingual_neuron_distribution(args):
+    """
+    Plots the distribution of the top 1% of bilingual neurons across all layers
+    for a specified language pair.
+    """
+    if not args.lang1 or not args.lang2:
+        print("Error: --lang1 and --lang2 are required for this mode.")
+        return
+
+    print(f"--- Starting Bilingual Neuron Distribution Plotting for {args.lang1}-{args.lang2} ---")
+
+    model_name_safe = args.model_path.replace("/", "_")
+    results_dir = getattr(args, 'analysis_results_dir', './neuron_analysis_results_math')
+    plot_dir = getattr(args, 'plot_output_dir', './plot/neuron_layer_distribution_math')
+
+    model_results_path = os.path.join(results_dir, model_name_safe)
+    plot_save_dir = os.path.join(plot_dir)
+    os.makedirs(plot_save_dir, exist_ok=True)
+
+    def process_module(file_pattern_template, module_name, keys_to_process=None):
+        file_pattern = file_pattern_template.format(lang1=args.lang1, lang2=args.lang2)
+        analysis_files = sorted(glob.glob(os.path.join(model_results_path, file_pattern)))
+        
+        if not analysis_files:
+            print(f"No analysis files found for module {module_name} with pattern {file_pattern}. Skipping.")
+            print(f"Searched in: {model_results_path}")
+            return
+
+        num_layers = len(analysis_files)
+        layers = range(num_layers)
+        plt.figure(figsize=(15, 8))
+
+        if keys_to_process is None:
+            keys_to_process = {module_name: None}
+
+        for key_name, data_key in keys_to_process.items():
+            all_scores = []
+            print(f"Processing {key_name}...")
+            print("Pass 1: Gathering all scores to determine global threshold...")
+            for file_path in tqdm(analysis_files, desc=f"Gathering Scores for {key_name}"):
+                data = torch.load(file_path)
+                scores = data[data_key]['sorted_scores'] if data_key and data_key in data else data['sorted_scores']
+                all_scores.append(scores)
+
+            if not all_scores:
+                print(f"No scores found for {key_name}, skipping.")
+                continue
+
+            all_scores_tensor = torch.cat(all_scores)
+            if all_scores_tensor.numel() == 0:
+                print(f"No scores available for {key_name} to calculate threshold.")
+                continue
+            
+            threshold = torch.quantile(all_scores_tensor, 0.99)
+
+            neuron_counts = torch.zeros(num_layers)
+            print("Pass 2: Counting neurons above threshold...")
+            for layer_idx, file_path in enumerate(tqdm(analysis_files, desc=f"Analyzing {key_name}")):
+                data = torch.load(file_path)
+                scores = data[data_key]['sorted_scores'] if data_key and data_key in data else data['sorted_scores']
+                count = (scores >= threshold).sum().item()
+                neuron_counts[layer_idx] = count
+
+            plt.plot(layers, neuron_counts.numpy(), marker='o', linestyle='-', label=f"{key_name}")
+
+        plt.title(f"Distribution of Top 1% Bilingual ({args.lang1}-{args.lang2}) Neurons in {module_name} (Score Threshold: {threshold:.4f})", fontsize=16)
+        plt.xlabel("Layer", fontsize=12)
+        plt.ylabel("Count of Bilingual Neurons", fontsize=12)
+        plt.xticks(layers)
+        plt.legend(title="Component")
+        plt.grid(True, which='both', linestyle='--', linewidth=0.5)
+        plt.tight_layout()
+
+        save_path_plot = os.path.join(plot_save_dir, f"{model_name_safe}_{module_name}_bilingual_{args.lang1}_{args.lang2}_neuron_distribution.png")
+        plt.savefig(save_path_plot)
+        plt.close()
+        print(f"Plot for {module_name} saved to {save_path_plot}")
+
+    mlp_pattern = "layer_*_bilingual_{lang1}_{lang2}_neurons_mlp.pth"
+    attn_pattern = "layer_*_bilingual_{lang1}_{lang2}_neurons_attn.pth"
+    
+    process_module(mlp_pattern, "MLP")
+    process_module(attn_pattern, "Attention", keys_to_process={'Q': 'avg_activations_q', 'K': 'avg_activations_k', 'V': 'avg_activations_v'})
+
+    print(f"--- Bilingual plotting complete for {args.lang1}-{args.lang2}. ---")
+
 if __name__ == "__main__":
     args = load_args()
     
@@ -947,6 +1033,8 @@ if __name__ == "__main__":
         plot_neuron_count_across_layers(args)
     elif mode == 'plot_multilingual_distribution':
         plot_multilingual_neuron_distribution(args)
+    elif mode == 'plot_bilingual_distribution':
+        plot_bilingual_neuron_distribution(args)
     elif mode == 'plot_sae_feature_distribution':
         # Plot distribution of high-magnitude, low-entropy features
         plot_lan_feature_distribution(args)
@@ -964,4 +1052,4 @@ if __name__ == "__main__":
     else:
         # 기본으로 실행되던 함수 또는 에러 메시지
         print(f"Unknown or default mode: {mode}. Please specify a mode.")
-        print("Available modes: plot_neuron_count, plot_lan_feature_distribution, plot_sae_feature_distribution_hard, code_switch, topk_feature, plot_multilingual_distribution")
+        print("Available modes: plot_neuron_count, plot_lan_feature_distribution, plot_sae_feature_distribution_hard, code_switch, topk_feature, plot_multilingual_distribution, plot_bilingual_distribution")

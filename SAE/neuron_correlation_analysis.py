@@ -101,6 +101,21 @@ def analyze_correlation(args):
     model_name_safe = args.model_name.replace("/", "_")
     analysis_dir1 = os.path.join(args.analysis_results_dir1, model_name_safe)
     analysis_dir2 = os.path.join(args.analysis_results_dir2, model_name_safe)
+
+    dir1 = args.analysis_results_dir1.split('_')
+    dir2 = args.analysis_results_dir2.split('_')
+    if dir1[-1] == 'results':
+        dir1 = 'multilingual'
+    elif dir1[-3] == 'results':
+        dir1 = dir1[-2] + "_" + dir1[-1]
+    else:
+        dir1 = dir1[-1]
+    if dir2 == 'results':
+        dir2 = 'multilingual'
+    elif dir2[-3] == 'results':
+        dir2 = dir2[-2] + "_" + dir2[-1]
+    else:
+        dir2 = dir2[-1]
     
     mode_str = f"cross_lingual_{args.lang1}_vs_{args.lang2}" if args.mode == 'cross' else "intra_lingual"
     output_subdir = os.path.join(args.plot_output_dir, f"{model_name_safe}_{args.module}_top1_percent_{mode_str}_with_counts")
@@ -148,7 +163,7 @@ def analyze_correlation(args):
             b1 = ax2.bar(x_indices - 0.2, plot_data['count1'], 0.4, alpha=0.6, color='steelblue', label=f'Count ({lang1.upper()})')
             b2 = ax2.bar(x_indices + 0.2, plot_data['count2'], 0.4, alpha=0.6, color='darkorange', label=f'Count ({lang2.upper()})')
             
-            title_str = f'Top 1% MLP Neuron Overlap for {lang1.upper()} (General) vs. {lang2.upper()} (Math)'
+            title_str = f'Top 1% MLP Neuron Overlap for {lang1.upper()} ({dir1}) vs. {lang2.upper()} ({dir2})'
             lns = l1
             labs = [l.get_label() for l in lns]
             ax1.legend(lns, labs, loc='upper left')
@@ -177,7 +192,7 @@ def analyze_correlation(args):
             b1 = ax2.bar(x_indices - 0.2, total_counts1, 0.4, alpha=0.5, color='gray', label=f'Total Count ({lang1.upper()})')
             b2 = ax2.bar(x_indices + 0.2, total_counts2, 0.4, alpha=0.5, color='black', label=f'Total Count ({lang2.upper()})')
             
-            title_str = f'Top 1% Attention Neuron Overlap for {lang1.upper()} (General) vs. {lang2.upper()} (Math)'
+            title_str = f'Top 1% Attention Neuron Overlap for {lang1.upper()} ({dir1}) vs. {lang2.upper()} ({dir2})'
             labs = [l.get_label() for l in lines]
             ax1.legend(lines, labs, loc='upper left')
             ax2.legend((b1, b2), (b1.get_label(), b2.get_label()), loc='upper right')
@@ -203,23 +218,213 @@ def analyze_correlation(args):
 
     print(f"\nCorrelation analysis complete. Plots saved in: {output_subdir}")
 
+def get_top_1_percent_bilingual_neurons(analysis_dir, module, lang1, lang2):
+    """
+    Identifies the top 1% of bilingual neurons using pre-analyzed results.
+    """
+    print(f"\nStarting Top 1% bilingual analysis for {lang1}-{lang2} from {analysis_dir}...")
+    file_pattern = f"layer_*_bilingual_{lang1}_{lang2}_neurons_{module}.pth"
+    analysis_files = sorted(glob.glob(os.path.join(analysis_dir, file_pattern)))
+
+    if not analysis_files:
+        raise FileNotFoundError(f"No bilingual analysis files found in {analysis_dir} with pattern {file_pattern}")
+
+    num_layers = len(analysis_files)
+    
+    # Pass 1: Gather all scores to determine the global threshold
+    all_scores = {c: [] for c in ['q', 'k', 'v']} if module == 'attn' else []
+
+    print("Pass 1: Gathering scores to determine global threshold...")
+    for file_path in tqdm(analysis_files, desc=f"Gathering Scores from {os.path.basename(analysis_dir)}"):
+        data = torch.load(file_path)
+        if module == 'mlp':
+            all_scores.append(data['sorted_scores'])
+        else: # attn
+            for comp in ['q', 'k', 'v']:
+                if comp in data:
+                    all_scores[comp].append(data[comp]['sorted_scores'])
+
+    # Calculate threshold
+    thresholds = {}
+    if module == 'mlp':
+        if all_scores:
+            scores_tensor = torch.cat(all_scores)
+            if scores_tensor.numel() > 0:
+                thresholds['mlp'] = torch.quantile(scores_tensor, 0.99)
+    else: # attn
+        for comp in ['q', 'k', 'v']:
+            if all_scores[comp]:
+                scores_tensor = torch.cat(all_scores[comp])
+                if scores_tensor.numel() > 0:
+                    thresholds[comp] = torch.quantile(scores_tensor, 0.99)
+
+    # Pass 2: Identify top 1% neurons per layer
+    top_neurons_by_layer = {layer: set() for layer in range(num_layers)} if module == 'mlp' else \
+                           {layer: {c: set() for c in ['q', 'k', 'v']} for layer in range(num_layers)}
+
+    print("Pass 2: Identifying top 1% bilingual neurons per layer...")
+    for layer_idx, file_path in enumerate(tqdm(analysis_files, desc="Identifying Bilingual Neurons")):
+        data = torch.load(file_path)
+        layer = int(os.path.basename(file_path).split('_')[1])
+
+        if module == 'mlp':
+            if 'mlp' in thresholds:
+                scores = data['sorted_scores']
+                indices = data['sorted_indices']
+                above_threshold_mask = scores > thresholds['mlp']
+                top_neurons_by_layer[layer] = set(indices[above_threshold_mask].tolist())
+        else: # attn
+            for comp in ['q', 'k', 'v']:
+                if comp in data and comp in thresholds:
+                    scores = data[comp]['sorted_scores']
+                    indices = data[comp]['sorted_indices']
+                    above_threshold_mask = scores > thresholds[comp]
+                    top_neurons_by_layer[layer][comp] = set(indices[above_threshold_mask].tolist())
+                    
+    return top_neurons_by_layer
+
+
+def analyze_bilingual_correlation(args):
+    model_name_safe = args.model_name.replace("/", "_")
+    
+    # Bilingual analysis files are expected to be in their own directory
+    bilingual_analysis_dir = os.path.join(args.analysis_results_dir_bi, model_name_safe)
+    
+    # Specific language analysis files
+    specific_lang_analysis_dir = os.path.join(args.analysis_results_dir_specific, model_name_safe)
+    
+    output_subdir = os.path.join(args.plot_output_dir, f"{model_name_safe}_{args.module}_bilingual_{args.lang1}_{args.lang2}_vs_{args.specific_lang}_correlation")
+    os.makedirs(output_subdir, exist_ok=True)
+
+    print(f"Analyzing bilingual correlation for model: {args.model_name}")
+    print(f"Bilingual pair: {args.lang1} vs {args.lang2}")
+    print(f"Comparing with specific language: {args.specific_lang}")
+    print(f"Plotting results to: {output_subdir}")
+
+    # 1. Get top 1% bilingual neurons
+    bilingual_neurons = get_top_1_percent_bilingual_neurons(bilingual_analysis_dir, args.module, args.lang1, args.lang2)
+
+    # 2. Get top 1% language-specific neurons for the specific language
+    specific_neurons, languages = get_top_1_percent_neurons(specific_lang_analysis_dir, args.module)
+    if args.specific_lang not in languages:
+        raise ValueError(f"--specific_lang '{args.specific_lang}' not found in specific neuron analysis languages: {languages}")
+
+    common_layers = sorted(list(bilingual_neurons.keys()))
+
+    plt.style.use('seaborn-v0_8-whitegrid')
+    x_indices = np.arange(len(common_layers))
+
+    fig, ax1 = plt.subplots(figsize=(18, 9))
+    ax2 = ax1.twinx()
+
+    if args.module == 'mlp':
+        similarities, count_bi, count_specific = [], [], []
+        for layer in common_layers:
+            bi_set = bilingual_neurons.get(layer, set())
+            specific_set = specific_neurons.get(layer, {}).get(args.specific_lang, set())
+            
+            similarities.append(calculate_jaccard_similarity(bi_set, specific_set))
+            
+            count_bi.append(len(bi_set))
+            count_specific.append(len(specific_set))
+
+        l1 = ax1.plot(x_indices, similarities, marker='o', linestyle='-', color='purple', label=f'Jaccard (Bilingual vs {args.specific_lang.upper()})')
+        
+        b1 = ax2.bar(x_indices - 0.2, count_bi, 0.4, alpha=0.6, color='gray', label=f'Count (Bilingual {args.lang1.upper()}-{args.lang2.upper()})')
+        b2 = ax2.bar(x_indices + 0.2, count_specific, 0.4, alpha=0.6, color='orange', label=f'Count ({args.specific_lang.upper()})')
+        
+        title_str = f'Top 1% Bilingual ({args.lang1.upper()}-{args.lang2.upper()}) vs. Specific ({args.specific_lang.upper()}) MLP Neuron Overlap'
+        lns = l1
+        labs = [l.get_label() for l in lns]
+        ax1.legend(lns, labs, loc='upper left')
+        ax2.legend((b1, b2), (b1.get_label(), b2.get_label()), loc='upper right')
+        ax1.set_ylabel('Jaccard Similarity', fontsize=12, color='purple')
+        ax1.tick_params(axis='y', labelcolor='purple')
+
+    else: # attn
+        plot_data = {c: {'similarity': [], 'count_bi': [], 'count_specific': []} for c in ['q', 'k', 'v']}
+        total_bi_counts, total_specific_counts = [], []
+
+        for layer in common_layers:
+            total_bi_set, total_specific_set = set(), set()
+            for comp in ['q', 'k', 'v']:
+                bi_set = bilingual_neurons.get(layer, {}).get(comp, set())
+                specific_set = specific_neurons.get(layer, {}).get(args.specific_lang, {}).get(comp, set())
+                
+                plot_data[comp]['similarity'].append(calculate_jaccard_similarity(bi_set, specific_set))
+                total_bi_set.update(bi_set)
+                total_specific_set.update(specific_set)
+
+            total_bi_counts.append(len(total_bi_set))
+            total_specific_counts.append(len(total_specific_set))
+
+        colors = ['#1f77b4', '#ff7f0e', '#2ca02c']
+        lines = []
+        for i, comp in enumerate(['q', 'k', 'v']):
+            l = ax1.plot(x_indices, plot_data[comp]['similarity'], marker='o', linestyle='-', color=colors[i], label=f'Jaccard ({comp.upper()})')
+            lines.extend(l)
+        
+        b1 = ax2.bar(x_indices - 0.2, total_bi_counts, 0.4, alpha=0.5, color='gray', label=f'Total Bilingual Count')
+        b2 = ax2.bar(x_indices + 0.2, total_specific_counts, 0.4, alpha=0.5, color='black', label=f'Total Specific Count ({args.specific_lang.upper()})')
+        
+        title_str = f'Top 1% Bilingual vs. Specific Attention Neuron Overlap for {args.lang1.upper()}-{args.lang2.upper()} vs {args.specific_lang.upper()}'
+        labs = [l.get_label() for l in lines]
+        ax1.legend(lines, labs, loc='upper left')
+        ax2.legend((b1, b2), (b1.get_label(), b2.get_label()), loc='upper right')
+        ax1.set_ylabel('Jaccard Similarity', fontsize=12)
+
+    ax1.set_title(f'{title_str}\nModel: {args.model_name}', fontsize=16, weight='bold')
+    ax1.set_xlabel('Layer', fontsize=12)
+    ax1.set_ylim(0, 1)
+    ax1.grid(True, which='major', axis='x')
+
+    ax2.set_ylabel('Neuron Count', fontsize=12)
+    ax2.set_ylim(0, max(ax2.get_ylim()[1], 1) * 1.1)
+
+    ax1.set_xticks(x_indices)
+    ax1.set_xticklabels(common_layers, rotation=45)
+    fig.tight_layout()
+
+    plot_filename = f'top1_bilingual_correlation_{args.lang1}_{args.lang2}_vs_{args.specific_lang}.png'
+    save_path = os.path.join(output_subdir, plot_filename)
+    plt.savefig(save_path, dpi=300)
+    plt.close(fig)
+
+    print(f"\nBilingual correlation analysis complete. Plot saved in: {output_subdir}")
+
 def main():
     parser = argparse.ArgumentParser(description="Analyze correlation of TOP 1% language-specific neurons.")
     parser.add_argument("--model_name", type=str, default="google/gemma-2-2b", help="Model name.")
-    parser.add_argument("--analysis_results_dir1", type=str, default="./neuron_analysis_results", help="Results dir for dataset 1 (general).")
-    parser.add_argument("--analysis_results_dir2", type=str, default="./neuron_analysis_results_math", help="Results dir for dataset 2 (math).")
+    
+    # Directories for 'cross' and 'intra' modes
+    parser.add_argument("--analysis_results_dir1", type=str, default="./neuron_analysis_results", help="Results dir for dataset 1 (e.g., general domain). Used in cross/intra mode.")
+    parser.add_argument("--analysis_results_dir2", type=str, default="./neuron_analysis_results_math", help="Results dir for dataset 2 (e.g., math domain). Used in cross/intra mode.")
+
+    # Directories for 'bilingual' mode
+    parser.add_argument("--analysis_results_dir_bi", type=str, default="./neuron_analysis_results_math_bi", help="Directory with bilingual neuron analysis results. Used in bilingual mode.")
+    parser.add_argument("--analysis_results_dir_specific", type=str, default="./neuron_analysis_results_math", help="Directory with specific language neuron analysis results. Used in bilingual mode.")
+
     parser.add_argument("--plot_output_dir", type=str, default="./plot/neuron_correlation", help="Base directory for plots.")
     parser.add_argument("--module", type=str, default="mlp", choices=["mlp", "attn"], help="Model module to analyze.")
-    parser.add_argument("--mode", type=str, default="intra", choices=["intra", "cross"], help="Analysis mode: 'intra' for same-language, 'cross' for cross-language.")
-    parser.add_argument("--lang1", type=str, default=None, help="Language from dataset 1 (e.g., 'en') for cross-lingual analysis.")
-    parser.add_argument("--lang2", type=str, default=None, help="Language from dataset 2 (e.g., 'ko') for cross-lingual analysis.")
+    parser.add_argument("--mode", type=str, default="intra", choices=["intra", "cross", "bilingual"], help="Analysis mode.")
     
+    # Language arguments
+    parser.add_argument("--lang1", type=str, default=None, help="Language 1 (e.g., 'en'). Required for 'cross' and 'bilingual' modes.")
+    parser.add_argument("--lang2", type=str, default=None, help="Language 2 (e.g., 'ko'). Required for 'cross' and 'bilingual' modes.")
+    parser.add_argument("--specific_lang", type=str, default=None, help="Specific language to compare against in 'bilingual' mode (e.g., 'en').")
+
     args = parser.parse_args()
 
-    if args.mode == 'cross' and (not args.lang1 or not args.lang2):
-        parser.error("--lang1 and --lang2 are required for --mode='cross'")
+    if args.mode in ['cross', 'bilingual'] and (not args.lang1 or not args.lang2):
+        parser.error("--lang1 and --lang2 are required for --mode='cross' or 'bilingual'")
+    
+    if args.mode == 'bilingual' and not args.specific_lang:
+        parser.error("--specific_lang is required for --mode='bilingual'")
 
-    analyze_correlation(args)
+    if args.mode == 'bilingual':
+        analyze_bilingual_correlation(args)
+    else:
+        analyze_correlation(args)
 
 if __name__ == "__main__":
     main()

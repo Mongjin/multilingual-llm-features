@@ -24,8 +24,9 @@ def load_args():
 
     parser.add_argument('--feature_data_path', default='./data/multilingual_data.jsonl', type=str,  help='model')
 
-    
-    
+    parser.add_argument('--lang1', type=str, help='First language for bilingual analysis.')
+    parser.add_argument('--lang2', type=str, help='Second language for bilingual analysis.')
+
     args = parser.parse_args()
     if args.model == 'gemma-2-9b':
         args.layer_num = 42
