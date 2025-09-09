@@ -70,11 +70,18 @@ class HookedTransformerActivationFinder(ActivationFinder):
             n_kv_heads = self.model.cfg.n_key_value_heads
             d_head = self.model.cfg.d_head
 
-            total_activations_mlp = torch.zeros((d_mlp, len(self.languages)), device=self.model.embed.W_E.device)
-            total_activations_q = torch.zeros((n_q_heads, d_head, len(self.languages)), device=self.model.embed.W_E.device)
-            total_activations_k = torch.zeros((n_kv_heads, d_head, len(self.languages)), device=self.model.embed.W_E.device)
-            total_activations_v = torch.zeros((n_kv_heads, d_head, len(self.languages)), device=self.model.embed.W_E.device)
-            token_counts = torch.zeros(len(self.languages), device=self.model.embed.W_E.device)
+            # When the model is sharded across multiple GPUs, each layer's
+            # activations live on the GPU that hosts that layer. Accumulating
+            # them directly into tensors on a specific GPU (e.g. the embedding
+            # device) triggers "Expected all tensors to be on the same device"
+            # errors. To avoid cross-device issues, keep the running totals on
+            # CPU and move per-layer activations to CPU before accumulation.
+
+            total_activations_mlp = torch.zeros((d_mlp, len(self.languages)))
+            total_activations_q = torch.zeros((n_q_heads, d_head, len(self.languages)))
+            total_activations_k = torch.zeros((n_kv_heads, d_head, len(self.languages)))
+            total_activations_v = torch.zeros((n_kv_heads, d_head, len(self.languages)))
+            token_counts = torch.zeros(len(self.languages))
 
             for _, row in tqdm(dataset.iterrows(), total=len(dataset), desc=f"Layer {layer} Data", leave=False):
                 prompt, lang = row['text'], row[self.type]
@@ -84,13 +91,13 @@ class HookedTransformerActivationFinder(ActivationFinder):
                     tokens = tokens.to(self.model.embed.W_E.device)
                     _, cache = self.model.run_with_cache(tokens, names_filter=[mlp_hook_point, attn_hook_point_q, attn_hook_point_k, attn_hook_point_v])
                     
-                    mlp_activations = cache[mlp_hook_point][0]
+                    mlp_activations = cache[mlp_hook_point][0].to("cpu")
                     total_activations_mlp[:, self.lang_to_idx[lang]] += mlp_activations.sum(dim=0)
 
-                    q_activations = cache[attn_hook_point_q][0]
-                    k_activations = cache[attn_hook_point_k][0]
-                    v_activations = cache[attn_hook_point_v][0]
-                    
+                    q_activations = cache[attn_hook_point_q][0].to("cpu")
+                    k_activations = cache[attn_hook_point_k][0].to("cpu")
+                    v_activations = cache[attn_hook_point_v][0].to("cpu")
+
                     total_activations_q[:, :, self.lang_to_idx[lang]] += q_activations.sum(dim=0)
                     total_activations_k[:, :, self.lang_to_idx[lang]] += k_activations.sum(dim=0)
                     total_activations_v[:, :, self.lang_to_idx[lang]] += v_activations.sum(dim=0)
