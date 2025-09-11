@@ -104,16 +104,20 @@ def analyze_correlation(args):
 
     dir1 = args.analysis_results_dir1.split('_')
     dir2 = args.analysis_results_dir2.split('_')
-    if dir1[-1] == 'results':
+    if dir1[-1] == 'results' or (dir1[-1] == 'normalized' and dir1[-2] == 'results'):
         dir1 = 'multilingual'
     elif dir1[-3] == 'results':
         dir1 = dir1[-2] + "_" + dir1[-1]
+    elif dir1[-4] == 'results':
+        dir1 = dir1[-3] + "_" + dir1[-2] + "_" + dir1[-1]
     else:
         dir1 = dir1[-1]
-    if dir2 == 'results':
+    if dir2[-1] == 'results' or (dir2[-1] == 'normalized' and dir2[-2] == 'results'):
         dir2 = 'multilingual'
     elif dir2[-3] == 'results':
         dir2 = dir2[-2] + "_" + dir2[-1]
+    elif dir2[-4] == 'results':
+        dir2 = dir2[-3] + "_" + dir2[-2] + "_" + dir2[-1]
     else:
         dir2 = dir2[-1]
     
