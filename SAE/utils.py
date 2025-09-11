@@ -48,8 +48,13 @@ def load_sae(layer, args):
         release = "gemma-scope-9b-pt-res"
     elif 'Llama-3.1-8B' in args.model_path:
         release = "llama_scope_lxr_8x"
+    elif "deepseek-r1-distill-llama-8b-qresearch" in args.model:
+        release = "deepseek-r1-distill-llama-8b-qresearch"
 
-    if 'Llama' in args.model:
+    if "deepseek-r1-distill-llama-8b-qresearch" in args.model:
+        sae_id = f"blocks.{layer}.hook_resid_post"
+        sae = SAE.from_pretrained(release, sae_id, device='cuda')[0]
+    elif 'Llama' in args.model:
         # sae = SparseAutoEncoder.from_pretrained(f"./Llama3_1-8B-Base-LXR-8x/Llama3_1-8B-Base-L{layer}R-8x")
         sae_id = f"l{layer}r_8x"
         sae = SAE.from_pretrained(release=release, sae_id=sae_id, device='cuda')
