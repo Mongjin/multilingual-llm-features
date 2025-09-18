@@ -275,8 +275,8 @@ def analyze_intervention(model, dataset1_path, dataset2_path, neuron_analysis_re
                 tokens1 = model.to_tokens(text1)
                 tokens2 = model.to_tokens(text2)
 
-                tokens1 = tokens1.to(model.embed.W_E.device)
-                tokens2 = tokens2.to(model.embed.W_E.device)
+                tokens1 = tokens1.to(model.cfg.device)
+                tokens2 = tokens2.to(model.cfg.device)
 
                 # 1. Clean runs
                 _, cache1_clean = model.run_with_cache(tokens1)
