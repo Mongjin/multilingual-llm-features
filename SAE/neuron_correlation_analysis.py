@@ -97,7 +97,7 @@ def calculate_jaccard_similarity(set1, set2):
     union = len(set1.union(set2))
     return intersection / union if union > 0 else 0.0
 
-def analyze_correlation(args):
+def analyze_correlation(args, module):
     model_name_safe = args.model_name.replace("/", "_")
     analysis_dir1 = os.path.join(args.analysis_results_dir1, model_name_safe)
     analysis_dir2 = os.path.join(args.analysis_results_dir2, model_name_safe)
@@ -122,14 +122,14 @@ def analyze_correlation(args):
         dir2 = dir2[-1]
     
     mode_str = f"cross_lingual_{args.lang1}_vs_{args.lang2}" if args.mode == 'cross' else "intra_lingual"
-    output_subdir = os.path.join(args.plot_output_dir, f"{model_name_safe}_{args.module}_top1_percent_{mode_str}_with_counts")
+    output_subdir = os.path.join(args.plot_output_dir, f"{model_name_safe}_{module}_top1_percent_{mode_str}_with_counts")
     os.makedirs(output_subdir, exist_ok=True)
 
     print(f"Analyzing correlation for model: {args.model_name}")
     print(f"Plotting results to: {output_subdir}")
 
-    top_neurons1, languages1 = get_top_1_percent_neurons(analysis_dir1, args.module)
-    top_neurons2, languages2 = get_top_1_percent_neurons(analysis_dir2, args.module)
+    top_neurons1, languages1 = get_top_1_percent_neurons(analysis_dir1, module)
+    top_neurons2, languages2 = get_top_1_percent_neurons(analysis_dir2, module)
 
     common_layers = sorted(list(set(top_neurons1.keys()).intersection(set(top_neurons2.keys()))))
 
@@ -154,7 +154,7 @@ def analyze_correlation(args):
         fig, ax1 = plt.subplots(figsize=(18, 9))
         ax2 = ax1.twinx()
 
-        if args.module == 'mlp':
+        if module == 'mlp':
             plot_data = {'similarity': [], 'count1': [], 'count2': []}
             for layer in common_layers:
                 set1 = top_neurons1.get(layer, {}).get(lang1, set())
@@ -287,8 +287,7 @@ def get_top_1_percent_bilingual_neurons(analysis_dir, module, lang1, lang2):
                     
     return top_neurons_by_layer
 
-
-def analyze_bilingual_correlation(args):
+def analyze_bilingual_correlation(args, module):
     model_name_safe = args.model_name.replace("/", "_")
     
     # Bilingual analysis files are expected to be in their own directory
@@ -297,7 +296,7 @@ def analyze_bilingual_correlation(args):
     # Specific language analysis files
     specific_lang_analysis_dir = os.path.join(args.analysis_results_dir_specific, model_name_safe)
     
-    output_subdir = os.path.join(args.plot_output_dir, f"{model_name_safe}_{args.module}_bilingual_{args.lang1}_{args.lang2}_vs_{args.specific_lang}_correlation")
+    output_subdir = os.path.join(args.plot_output_dir, f"{model_name_safe}_{module}_bilingual_{args.lang1}_{args.lang2}_vs_{args.specific_lang}_correlation")
     os.makedirs(output_subdir, exist_ok=True)
 
     print(f"Analyzing bilingual correlation for model: {args.model_name}")
@@ -306,10 +305,10 @@ def analyze_bilingual_correlation(args):
     print(f"Plotting results to: {output_subdir}")
 
     # 1. Get top 1% bilingual neurons
-    bilingual_neurons = get_top_1_percent_bilingual_neurons(bilingual_analysis_dir, args.module, args.lang1, args.lang2)
+    bilingual_neurons = get_top_1_percent_bilingual_neurons(bilingual_analysis_dir, module, args.lang1, args.lang2)
 
     # 2. Get top 1% language-specific neurons for the specific language
-    specific_neurons, languages = get_top_1_percent_neurons(specific_lang_analysis_dir, args.module)
+    specific_neurons, languages = get_top_1_percent_neurons(specific_lang_analysis_dir, module)
     if args.specific_lang not in languages:
         raise ValueError(f"--specific_lang '{args.specific_lang}' not found in specific neuron analysis languages: {languages}")
 
@@ -321,7 +320,7 @@ def analyze_bilingual_correlation(args):
     fig, ax1 = plt.subplots(figsize=(18, 9))
     ax2 = ax1.twinx()
 
-    if args.module == 'mlp':
+    if module == 'mlp':
         similarities, count_bi, count_specific = [], [], []
         for layer in common_layers:
             bi_set = bilingual_neurons.get(layer, set())
@@ -409,7 +408,6 @@ def main():
     parser.add_argument("--analysis_results_dir_specific", type=str, default="./neuron_analysis_results_math", help="Directory with specific language neuron analysis results. Used in bilingual mode.")
 
     parser.add_argument("--plot_output_dir", type=str, default="./plot/neuron_correlation", help="Base directory for plots.")
-    parser.add_argument("--module", type=str, default="mlp", choices=["mlp", "attn"], help="Model module to analyze.")
     parser.add_argument("--mode", type=str, default="intra", choices=["intra", "cross", "bilingual"], help="Analysis mode.")
     
     # Language arguments
@@ -425,10 +423,12 @@ def main():
     if args.mode == 'bilingual' and not args.specific_lang:
         parser.error("--specific_lang is required for --mode='bilingual'")
 
-    if args.mode == 'bilingual':
-        analyze_bilingual_correlation(args)
-    else:
-        analyze_correlation(args)
+    for module in ["mlp", "attn"]:
+        print(f"\nRunning analysis for module: {module}\n")
+        if args.mode == 'bilingual':
+            analyze_bilingual_correlation(args, module)
+        else:
+            analyze_correlation(args, module)
 
 if __name__ == "__main__":
     main()

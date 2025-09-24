@@ -198,34 +198,32 @@ class PytorchHookActivationFinder(ActivationFinder):
             d_mlp = self.model.config.intermediate_size
             n_q_heads = self.model.config.num_attention_heads
             n_kv_heads = self.model.config.num_key_value_heads if hasattr(self.model.config, 'num_key_value_heads') else n_q_heads
-            d_head = self.model.config.hidden_size // n_q_heads
+            d_head = self.model.config.head_dim
             
             # Use the device of the first parameter as the home device
             home_device = next(self.model.parameters()).device
 
-            total_activations_mlp = torch.zeros((d_mlp, len(self.languages)), device=home_device)
-            total_activations_q = torch.zeros((n_q_heads, d_head, len(self.languages)), device=home_device)
-            total_activations_k = torch.zeros((n_kv_heads, d_head, len(self.languages)), device=home_device)
-            total_activations_v = torch.zeros((n_kv_heads, d_head, len(self.languages)), device=home_device)
-            token_counts = torch.zeros(len(self.languages), device=home_device)
+            total_activations_mlp = torch.zeros((d_mlp, len(self.languages)))
+            total_activations_q = torch.zeros((n_q_heads, d_head, len(self.languages)))
+            total_activations_k = torch.zeros((n_kv_heads, d_head, len(self.languages)))
+            total_activations_v = torch.zeros((n_kv_heads, d_head, len(self.languages)))
+            token_counts = torch.zeros(len(self.languages))
 
             for _, row in tqdm(dataset.iterrows(), total=len(dataset), desc=f"Layer {layer} Data", leave=False):
                 prompt, lang = row['text'], row[self.type]
                 if not prompt: continue
                 
-                inputs = self.tokenizer(prompt, return_tensors="pt", truncation=True, max_length=512).to(self.device)
+                inputs = self.tokenizer(prompt, return_tensors="pt", truncation=True, max_length=512).to(self.model.model.embed_tokens.weight.device)
                 
                 try:
                     self.activations.clear()
                     _ = self.model(**inputs)
 
-                    print(f"Activation keys: {self.activations.keys()}")
-
                     # Move activations to the home device for accumulation
-                    mlp_activations = self.activations.get('mlp')[0].to(home_device)
-                    q_activations = self.activations.get('q')[0].to(home_device)
-                    k_activations = self.activations.get('k')[0].to(home_device)
-                    v_activations = self.activations.get('v')[0].to(home_device)
+                    mlp_activations = self.activations.get('mlp')[0].to('cpu')
+                    q_activations = self.activations.get('q')[0].to('cpu')
+                    k_activations = self.activations.get('k')[0].to('cpu')
+                    v_activations = self.activations.get('v')[0].to('cpu')
 
                     # Reshape attention heads
                     q_activations = q_activations.view(q_activations.shape[0], n_q_heads, d_head)

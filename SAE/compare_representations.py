@@ -275,9 +275,6 @@ def analyze_intervention(model, dataset1_path, dataset2_path, neuron_analysis_re
                 tokens1 = model.to_tokens(text1)
                 tokens2 = model.to_tokens(text2)
 
-                tokens1 = tokens1.to(model.cfg.device)
-                tokens2 = tokens2.to(model.cfg.device)
-
                 # 1. Clean runs
                 _, cache1_clean = model.run_with_cache(tokens1)
                 _, cache2_clean = model.run_with_cache(tokens2)
@@ -305,9 +302,9 @@ def analyze_intervention(model, dataset1_path, dataset2_path, neuron_analysis_re
                     act2_top = cache2_top[act_name].to('cpu').mean(dim=1).squeeze()
                     act2_rand = cache2_rand[act_name].to('cpu').mean(dim=1).squeeze()
 
-                    sims_clean.append(F.cosine_similarity(act1_clean.to('cpu'), act2_clean.to('cpu'), dim=-1).item())
-                    sims_top.append(F.cosine_similarity(act1_clean.to('cpu'), act2_top.to('cpu'), dim=-1).item())
-                    sims_random.append(F.cosine_similarity(act1_clean.to('cpu'), act2_rand.to('cpu'), dim=-1).item())
+                    sims_clean.append(F.cosine_similarity(act1_clean, act2_clean, dim=-1).item())
+                    sims_top.append(F.cosine_similarity(act1_clean, act2_top, dim=-1).item())
+                    sims_random.append(F.cosine_similarity(act1_clean, act2_rand, dim=-1).item())
                 
                 all_sims_clean.append(sims_clean)
                 all_sims_top.append(sims_top)
