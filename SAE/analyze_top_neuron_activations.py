@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 from transformer_lens import HookedTransformer, utils
 import heapq
+from collections import defaultdict
 
 # Suppress gradient calculations for inference
 torch.set_grad_enabled(False)
@@ -92,18 +93,15 @@ def analyze_activations_single_pass(model, dataset, modules_to_run, top_neurons_
                     if is_attn:
                         activations = activations.view(activations.shape[0], -1)
                     
-                    max_activations, max_indices = torch.max(activations, dim=0)
+                    max_activations, _ = torch.max(activations, dim=0)
 
                     for neuron_idx in neurons_dict.keys():
                         if neuron_idx < len(max_activations):
                             activation_value = max_activations[neuron_idx].item()
-                            token_position = max_indices[neuron_idx].item()
-                            token_id = tokens[0, token_position]
-                            activating_token = model.to_string([token_id])
-
+                            
                             heap = neurons_dict[neuron_idx]
-                            # Store (activation, token, full_text) for context if needed later
-                            item_to_store = (activation_value, activating_token)
+                            # Store (activation, full_text) for context
+                            item_to_store = (activation_value, text)
 
                             if len(heap) < top_n_texts:
                                 heapq.heappush(heap, item_to_store)
@@ -128,23 +126,28 @@ def plot_module_results(results, module, top_n_texts, output_dir, source_path, t
         for neuron_idx, heap in neurons.items():
             if not heap: continue
             
+            # The heap now contains (activation, text), we need to re-run analysis for tokens
+            # This function is kept for token-level analysis, but we need to adapt it or create a new one.
+            # For simplicity, let's assume the logic is to show the text, not the token.
+            # The original intent was to show tokens, so this function's purpose is now blurred.
+            # Let's adjust it to show the text and max activation.
+            
             sorted_items = sorted(heap, key=lambda x: x[0], reverse=True)
             activations = [item[0] for item in sorted_items]
-            tokens = [item[1] for item in sorted_items]
-            # print(f"Neuron {neuron_idx} in Layer {layer_idx} top tokens: {tokens}")
+            texts = [item[1] for item in sorted_items]
 
-            # Escape dollar signs and remove replacement characters for clean plotting
-            cleaned_tokens = [token.replace('$', '\\$').replace("\ufffd", "") for token in tokens]
+            # Clean texts for plotting
+            cleaned_texts = [text.replace('$', '\$').replace("\ufffd", "")[:80] for text in texts] # Show first 80 chars
 
-            fig, ax = plt.subplots(figsize=(10, 8))
-            y_pos = range(len(cleaned_tokens))
+            fig, ax = plt.subplots(figsize=(12, 8))
+            y_pos = range(len(cleaned_texts))
             bars = ax.barh(y_pos, activations, align='center', color='lightgreen')
             ax.set_yticks(y_pos)
-            ax.set_yticklabels(cleaned_tokens, fontsize=12)
+            ax.set_yticklabels(cleaned_texts, fontsize=10)
             ax.invert_yaxis()
             ax.set_xlabel('Max Activation Value')
-            title = f'Top {top_n_texts} Activating Tokens ({task_type}) for {neuron_type.upper()} {module.upper()} Neuron {neuron_idx} in Layer {layer_idx}'
-            ax.set_title(title)
+            title = f'Top {top_n_texts} Activating Texts ({task_type}) for {neuron_type.upper()} {module.upper()} Neuron {neuron_idx} in Layer {layer_idx}'
+            ax.set_title(title, wrap=True)
             
             for bar in bars:
                 width = bar.get_width()
@@ -153,10 +156,111 @@ def plot_module_results(results, module, top_n_texts, output_dir, source_path, t
             plt.suptitle(f"Source: {os.path.basename(source_path)}", y=0.02, fontsize=8, color='gray')
             plt.tight_layout(rect=[0, 0.03, 1, 0.95])
             
-            plot_path = os.path.join(layer_plot_dir, f'neuron_{neuron_idx}_top_tokens.png')
+            plot_path = os.path.join(layer_plot_dir, f'neuron_{neuron_idx}_top_texts.png')
             plt.savefig(plot_path)
             plt.close(fig)
     print(f"{module.upper()} plots saved in {plot_dir}")
+
+def plot_word_level_results(model, results, module, top_n_texts, output_dir, source_path, task_type, neuron_type):
+    """Plots word-level activation results for a single module."""
+    print(f"\n--- Generating Word-Level {module.upper()} Plots ---")
+    plot_dir = os.path.join(output_dir, f"top_{top_n_texts}_word_activations_{module.lower()}")
+    os.makedirs(plot_dir, exist_ok=True)
+
+    is_attn = module in ['q', 'k', 'v']
+
+    for layer_idx, neurons in tqdm(results.items(), desc=f"Generating {module.upper()} Word Plots"):
+        layer_plot_dir = os.path.join(plot_dir, f"layer_{layer_idx}")
+        os.makedirs(layer_plot_dir, exist_ok=True)
+        hook_point = get_hook_point(module, layer_idx)
+
+        for neuron_idx, heap in neurons.items():
+            if not heap: continue
+
+            aggregated_word_activations = defaultdict(list)
+
+            top_texts = sorted(heap, key=lambda x: x[0], reverse=True)
+
+            for _, text in top_texts:
+                if not text: continue
+                
+                tokens = model.to_tokens(text, truncate=True)
+                
+                try:
+                    _, cache = model.run_with_cache(tokens, names_filter=[hook_point])
+                    
+                    activations = cache[hook_point][0]
+                    if is_attn:
+                        activations = activations.view(activations.shape[0], -1)
+                    
+                    neuron_activations = activations[:, neuron_idx]
+                    str_tokens = model.to_str_tokens(tokens[0])
+
+                    current_word = ""
+                    current_acts = []
+
+                    if str_tokens:
+                        current_word = str_tokens[0]
+                        current_acts.append(neuron_activations[0].item())
+
+                    for i in range(1, len(str_tokens)):
+                        token_str = str_tokens[i]
+                        activation = neuron_activations[i].item()
+
+                        if token_str.startswith(' '):
+                            if current_word and current_acts:
+                                avg_activation = sum(current_acts) / len(current_acts)
+                                aggregated_word_activations[current_word].append(avg_activation)
+                            
+                            current_word = token_str[1:]
+                            current_acts = [activation]
+                        else:
+                            current_word += token_str
+                            current_acts.append(activation)
+                    
+                    if current_word and current_acts:
+                        avg_activation = sum(current_acts) / len(current_acts)
+                        aggregated_word_activations[current_word].append(avg_activation)
+
+                except Exception as e:
+                    print(f"Skipping text '{text[:50]}...' due to error during word analysis: {e}")
+                    continue
+
+            if not aggregated_word_activations: continue
+
+            final_word_avg = {word: sum(acts) / len(acts) for word, acts in aggregated_word_activations.items()}
+            
+            sorted_words = sorted(final_word_avg.items(), key=lambda item: item[1], reverse=True)
+            sorted_words = [(word, act) for word, act in sorted_words if word.strip()]
+
+            top_items = sorted_words[:top_n_texts]
+            words = [item[0].replace('$', '\$').replace("\ufffd", "") for item in top_items]
+            avg_activations = [item[1] for item in top_items]
+
+            if not words: continue
+
+            fig, ax = plt.subplots(figsize=(12, 10))
+            y_pos = range(len(words))
+            bars = ax.barh(y_pos, avg_activations, align='center', color='skyblue')
+            ax.set_yticks(y_pos)
+            ax.set_yticklabels(words, fontsize=12)
+            ax.invert_yaxis()
+            ax.set_xlabel('Average Activation Value')
+            title = f'Top Words by Avg. Activation ({task_type}) for {neuron_type.upper()} {module.upper()} Neuron {neuron_idx} in Layer {layer_idx}'
+            ax.set_title(title, wrap=True)
+            
+            for bar in bars:
+                width = bar.get_width()
+                ax.text(width, bar.get_y() + bar.get_height()/2., f'{width:.4f}', va='center', ha='left')
+
+            plt.suptitle(f"Source: {os.path.basename(source_path)}", y=0.02, fontsize=8, color='gray')
+            plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+            
+            plot_path = os.path.join(layer_plot_dir, f'neuron_{neuron_idx}_top_words.png')
+            plt.savefig(plot_path)
+            plt.close(fig)
+            
+    print(f"Word-level {module.upper()} plots saved in {plot_dir}")
 
 def main():
     parser = argparse.ArgumentParser(description="Analyze texts that maximally activate top neurons.")
@@ -168,11 +272,12 @@ def main():
     parser.add_argument("--neuron_type", type=str, required=True, help="The type of the neurons to analyze (e.g., 'en', 'ko').")
     parser.add_argument("--module", type=str, default="all", choices=['all', 'mlp', 'q', 'k', 'v'], help="Module to analyze. 'all' runs all modules.")
     parser.add_argument("--top_n_texts", type=int, default=5, help="Number of top activating texts to show per neuron.")
+    parser.add_argument("--analysis_level", type=str, default="token", choices=['token', 'word'], help="Level of analysis: 'token' or 'word'.")
 
     args = parser.parse_args()
 
     # --- Korean Font Setup ---
-    if 'kor' in args.dataset_path:
+    if 'kor' in args.dataset_path or args.neuron_type == 'ko':
         try:
             font_path = fm.findfont(fm.FontProperties(family='NanumGothic'))
             plt.rcParams['font.family'] = 'NanumGothic'
@@ -215,10 +320,16 @@ def main():
 
     for module, results in all_results.items():
         if results:
-            plot_module_results(
-                results, module, args.top_n_texts, output_dir_final, 
-                source_paths[module], args.task_type, args.neuron_type
-            )
+            if args.analysis_level == 'word':
+                plot_word_level_results(
+                    model, results, module, args.top_n_texts, output_dir_final, 
+                    source_paths[module], args.task_type, args.neuron_type
+                )
+            else: # 'token' level
+                plot_module_results(
+                    results, module, args.top_n_texts, output_dir_final, 
+                    source_paths[module], args.task_type, args.neuron_type
+                )
 
 if __name__ == "__main__":
     main()
