@@ -277,7 +277,7 @@ def main():
     args = parser.parse_args()
 
     # --- Korean Font Setup ---
-    if 'kor' in args.dataset_path or args.neuron_type == 'ko':
+    if 'kor' in args.dataset_path or args.neuron_type == 'ko' or 'ja' in args.dataset_path:
         try:
             font_path = fm.findfont(fm.FontProperties(family='NanumGothic'))
             plt.rcParams['font.family'] = 'NanumGothic'
